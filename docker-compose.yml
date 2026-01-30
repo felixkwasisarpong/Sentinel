@@ -1,0 +1,28 @@
+# docker-compose.yml
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports: ["5432:5432"]
+
+  mcp-sandbox:
+    build: ./services/mcp-sandbox
+    ports: ["7001:7001"]
+
+  gateway-api:
+    build: ./services/gateway-api
+    environment:
+      DATABASE_URL: postgresql+psycopg2://app:app@postgres:5432/app
+      MCP_URL: http://mcp-sandbox:7001
+    ports: ["8000:8000"]
+    depends_on: [postgres, mcp-sandbox]
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports: ["9090:9090"]
+    depends_on: [gateway-api]
