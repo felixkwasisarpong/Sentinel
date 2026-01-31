@@ -10,6 +10,9 @@ from .metrics import tool_calls, decision_latency
 from .db.session import SessionLocal
 from .db.models import Run, ToolCall, Decision
 from .redaction import redact_args
+from .db.queries import get_runs, get_run, get_tool_calls_for_run, get_decision_for_tool_call, get_recent_decisions
+from .graphql_types import RunType, ToolCallType, DecisionType
+
 
 
 
@@ -150,5 +153,76 @@ class Query:
     @strawberry.field
     def ping(self) -> str:
         return "pong"
+    
+
+@strawberry.type
+class Query:
+
+    @strawberry.field
+    def runs(self, limit: int = 20) -> list[RunType]:
+        db = SessionLocal()
+        runs = get_runs(db, limit)
+        result = []
+
+        for r in runs:
+            result.append(
+                RunType(
+                    id=str(r.id),
+                    orchestrator=r.orchestrator,
+                    created_at=r.created_at,
+                    tool_calls=[]
+                )
+            )
+
+        db.close()
+        return result
+
+    @strawberry.field
+    def run(self, id: str) -> RunType | None:
+        db = SessionLocal()
+        run = get_run(db, id)
+        if not run:
+            db.close()
+            return None
+
+        tool_calls = []
+        for tc in get_tool_calls_for_run(db, run.id):
+            decision = get_decision_for_tool_call(db, tc.id)
+            tool_calls.append(
+                ToolCallType(
+                    id=str(tc.id),
+                    tool_name=tc.tool_name,
+                    args_redacted=tc.args_redacted,
+                    decision=DecisionType(
+                        decision=decision.decision,
+                        reason=decision.reason,
+                        created_at=decision.created_at,
+                    ) if decision else None
+                )
+            )
+
+        result = RunType(
+            id=str(run.id),
+            orchestrator=run.orchestrator,
+            created_at=run.created_at,
+            tool_calls=tool_calls,
+        )
+        db.close()
+        return result
+
+    @strawberry.field
+    def decisions(self, limit: int = 20) -> list[DecisionType]:
+        db = SessionLocal()
+        decisions = get_recent_decisions(db, limit)
+        result = [
+            DecisionType(
+                decision=d.decision,
+                reason=d.reason,
+                created_at=d.created_at
+            )
+            for d in decisions
+        ]
+        db.close()
+        return result
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)
