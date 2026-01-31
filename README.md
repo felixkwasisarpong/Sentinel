@@ -116,6 +116,34 @@ Everything else remains identical:
 
 This enables a **fair, reproducible comparison**.
 
+**Proof (current output):**
+
+#### LangGraph (example)
+```json
+{
+  "user_task": "list files",
+  "plan": "Use fs.list_dir to inspect the sandbox",
+  "tool_result": "[]",
+  "final_answer": "Tool executed successfully. Result: []"
+}
+```
+
+#### FSM (example)
+```json
+{
+  "final_state": {
+    "user_task": "list files",
+    "plan": "List sandbox files",
+    "tool": "fs.list_dir",
+    "args": {
+      "path": "/sandbox"
+    },
+    "decision": "ALLOW",
+    "result": "[]"
+  }
+}
+```
+
 ---
 
 ### 📚 GraphRAG‑Backed Policy Reasoning
@@ -203,8 +231,6 @@ Results are compared across:
 - **runs**
 - **tool_calls**
 - **decisions**
-- **policy_citations**
-- **metrics**
 
 All schema changes are managed via Alembic migrations.
 
@@ -242,11 +268,12 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 - GraphQL control plane
 - Audit logging
 - Prometheus metrics
+- Persisted audit logs with GraphQL read queries (runs, tool calls, decisions)
 
 ### 🚧 Phase 1 — Orchestration Comparison
-- LangGraph runner
-- Custom FSM runner
-- Identical tool and policy interfaces
+- ✅ LangGraph runner (single-agent) — `POST /agent/run?task=...`
+- ✅ FSM runner (deterministic baseline) — `POST /agent/fsm/run?task=...`
+- ✅ Fairness rule enforced: same tools, same policies, same MCP boundary; only orchestrator differs
 
 ### 🚧 Phase 2 — GraphRAG Proof Mode
 - Neo4j policy graph
