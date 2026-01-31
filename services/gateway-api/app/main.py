@@ -6,6 +6,8 @@ from .db.base import Base
 from .db.session import engine
 from .agents.langgraph_runner import build_langgraph
 from .agents.state import AgentState
+from .agents.fsm_runner import FSMRunner
+
 
 
 langgraph = build_langgraph()
@@ -16,7 +18,7 @@ app = FastAPI(title="Senteniel Gateway")
 
 Base.metadata.create_all(bind=engine)
 
-app.mount("/metrics", make_asgi_app())
+
 
 
 graphql_app = GraphQLRouter(schema)
@@ -37,3 +39,11 @@ def run_agent(task: str):
 
     result = langgraph.invoke(initial_state)
     return result
+
+@app.post("/agent/fsm/run")
+def run_fsm(task: str):
+    fsm = FSMRunner(task)
+    ctx = fsm.run()
+    return {
+        "final_state": ctx,
+    }
