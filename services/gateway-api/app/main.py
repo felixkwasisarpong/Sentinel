@@ -4,6 +4,13 @@ from prometheus_client import make_asgi_app
 from .graphql_schema import schema
 from .db.base import Base
 from .db.session import engine
+from .agents.langgraph_runner import build_langgraph
+from .agents.state import AgentState
+
+
+langgraph = build_langgraph()
+
+
 
 app = FastAPI(title="Senteniel Gateway")
 
@@ -16,3 +23,17 @@ graphql_app = GraphQLRouter(schema)
 app.include_router(graphql_app, prefix="/graphql")
 
 app.mount("/metrics", make_asgi_app())
+
+
+
+@app.post("/agent/run")
+def run_agent(task: str):
+    initial_state: AgentState = {
+        "user_task": task,
+        "plan": None,
+        "tool_result": None,
+        "final_answer": None,
+    }
+
+    result = langgraph.invoke(initial_state)
+    return result
