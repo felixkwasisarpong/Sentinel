@@ -1,8 +1,6 @@
+# 🛡️ SENTENIEL — Secure Control Plane for Tool‑Using AI Agents
 
-
-# 🛡️ SENTINEL — Secure Control Plane for Tool‑Using AI Agents
-
-![Sentinel Banner](docs/banner.png)
+![Senteniel Banner](docs/banner.png)
 
 > **A production‑grade, agent‑safety and tool‑use control platform for autonomous AI systems — combining MCP‑based tool isolation, LangGraph and FSM orchestration, GraphRAG‑backed policy reasoning, and audit‑grade decision traces. Designed to evaluate and enforce safe agent execution at scale.**
 
@@ -23,13 +21,13 @@
 
 ---
 
-⭐ **Star this repository** — Sentinel is built as a reference system for safe, auditable agent execution.
+⭐ **Star this repository** — Senteniel is built as a reference system for safe, auditable agent execution.
 
 ---
 
-## 🔥 Why Sentinel?
+## 🔥 Why Senteniel?
 
-**Sentinel is not a chatbot, copilot, or demo agent.**  
+**Senteniel is not a chatbot, copilot, or demo agent.**  
 It is a **control plane** for **tool‑using AI agents**.
 
 As modern LLM agents gain the ability to:
@@ -41,7 +39,7 @@ As modern LLM agents gain the ability to:
 
 **prompt injection and unsafe tool execution become real security risks.**
 
-Sentinel exists to answer a single hard question:
+Senteniel exists to answer a single hard question:
 
 > *“Should this agent be allowed to do this — and can we prove why?”*
 
@@ -49,7 +47,7 @@ Sentinel exists to answer a single hard question:
 
 ## 🧠 About
 
-Sentinel is an **agent‑security research and engineering platform** built to:
+Senteniel is an **agent‑security research and engineering platform** built to:
 
 - enforce **least‑privilege tool use**
 - prevent **prompt‑injection‑driven actions**
@@ -67,12 +65,12 @@ It is **industry‑agnostic** and applicable to:
 
 ## 🏗️ Core Concepts
 
-Sentinel enforces strict separation of concerns:
+Senteniel enforces strict separation of concerns:
 
 | Layer | Responsibility |
 |------|----------------|
 | **Agent** | Proposes actions |
-| **Gateway (Sentinel)** | Decides if actions are allowed |
+| **Gateway (Senteniel)** | Decides if actions are allowed |
 | **MCP Server** | Executes tools (sandboxed) |
 | **Policy Engine** | Enforces RBAC / ABAC |
 | **GraphRAG** | Grounds decisions in policy and incidents |
@@ -104,7 +102,7 @@ This makes tool‑use safety **concrete and enforceable**, not theoretical.
 ---
 
 ### 🧠 Dual Orchestration Engines
-Sentinel evaluates the **same agent logic** across two orchestration strategies:
+Senteniel evaluates the **same agent logic** across two orchestration strategies:
 
 - **LangGraph**
 - **Custom Finite State Machine (FSM)**
@@ -144,7 +142,7 @@ Nothing is implicit. Nothing is hidden.
 ---
 
 ### 📊 Evaluation & Leaderboards
-Sentinel includes a built‑in evaluation harness to measure:
+Senteniel includes a built‑in evaluation harness to measure:
 
 - prompt‑injection block rate
 - unsafe execution rate
@@ -168,7 +166,7 @@ Results are compared across:
      │ Proposes tool call
      ▼
 ┌──────────────────┐
-│ Sentinel Gateway │  (GraphQL)
+│ Senteniel Gateway │  (GraphQL)
 │  - Policy Engine │
 │  - Risk Scoring  │
 │  - GraphRAG      │
@@ -188,7 +186,7 @@ Results are compared across:
 
 1. A user or system submits a task  
 2. The agent proposes one or more tool calls  
-3. Sentinel evaluates:
+3. Senteniel evaluates:
    - tool permissions
    - role and environment
    - untrusted input boundaries
@@ -214,7 +212,7 @@ All schema changes are managed via Alembic migrations.
 
 ## 🖥️ User Interfaces
 
-Sentinel provides a web UI for **security, platform, and infra teams**:
+Senteniel provides a web UI for **security, platform, and infra teams**:
 
 ### 🔍 Dashboard
 - active runs
@@ -270,7 +268,7 @@ Sentinel provides a web UI for **security, platform, and infra teams**:
 
 ## 🤝 Why This Project Matters
 
-Sentinel targets one of the most urgent unsolved problems in modern AI systems:
+Senteniel targets one of the most urgent unsolved problems in modern AI systems:
 
 > *How do we safely allow autonomous agents to act in the real world?*
 
