@@ -7,6 +7,15 @@ from .contracts import ToolCall
 from .policy import evaluate_policy
 from .mcp_client import call_tool
 from .metrics import tool_calls, decision_latency
+from .db.session import SessionLocal
+from .db.models import Run, ToolCall, Decision
+from .redaction import redact_args
+from .db.queries import get_runs, get_run, get_tool_calls_for_run, get_decision_for_tool_call, get_recent_decisions
+from .graphql_types import RunType, ToolCallType, DecisionType
+
+
+
+
 
 try:
     from strawberry.scalars import JSON as JSONScalar
@@ -63,6 +72,11 @@ class Mutation:
 
     @strawberry.mutation
     def propose_tool_call(self, tool: str, args: JSONScalar = "{}") -> ToolDecision:
+        db = SessionLocal()
+
+        run = Run(orchestrator="manual", agent_id="manual")
+        db.add(run)
+        db.flush()
         start = time.time()
 
         # Accept JSON as a string from GraphQL and parse it into a dict
@@ -78,13 +92,12 @@ class Mutation:
             decision_latency.observe((time.time() - start) * 1000)
             return ToolDecision(tool_call_id="n/a", decision="BLOCK", reason="Args must be an object (pass as JSON string)", result=None)
 
-        allowed, reason = evaluate_policy(tool, parsed_args)
+        allowed, reason, risk_score = evaluate_policy(tool, parsed_args)
+        safe_args = redact_args(parsed_args)
         if not allowed:
             tool_calls.labels(tool=tool, decision="BLOCK").inc()
             decision_latency.observe((time.time() - start) * 1000)
             return ToolDecision(tool_call_id="n/a", decision="BLOCK", reason=reason, result=None)
-
-        ToolCall(tool=tool, args=parsed_args)
         try:
             result = call_tool(tool, parsed_args)
         except requests.RequestException as exc:
@@ -112,6 +125,26 @@ class Mutation:
         tool_calls.labels(tool=tool, decision="ALLOW").inc()
         decision_latency.observe((time.time() - start) * 1000)
 
+
+
+        tool_call = ToolCall(
+            run_id=run.id,
+            tool_name=tool,
+            args_redacted=safe_args
+        )
+        db.add(tool_call)
+        db.flush()
+
+        decision = Decision(
+            tool_call_id=tool_call.id,
+            decision="ALLOW",
+            reason=reason,
+            risk_score=risk_score
+        )
+        db.add(decision)
+
+        db.commit()
+        db.close()
         return ToolDecision(tool_call_id="n/a", decision="ALLOW", reason=reason, result=result_text)
 
 
@@ -120,5 +153,76 @@ class Query:
     @strawberry.field
     def ping(self) -> str:
         return "pong"
+    
+
+@strawberry.type
+class Query:
+
+    @strawberry.field
+    def runs(self, limit: int = 20) -> list[RunType]:
+        db = SessionLocal()
+        runs = get_runs(db, limit)
+        result = []
+
+        for r in runs:
+            result.append(
+                RunType(
+                    id=str(r.id),
+                    orchestrator=r.orchestrator,
+                    created_at=r.created_at,
+                    tool_calls=[]
+                )
+            )
+
+        db.close()
+        return result
+
+    @strawberry.field
+    def run(self, id: str) -> RunType | None:
+        db = SessionLocal()
+        run = get_run(db, id)
+        if not run:
+            db.close()
+            return None
+
+        tool_calls = []
+        for tc in get_tool_calls_for_run(db, run.id):
+            decision = get_decision_for_tool_call(db, tc.id)
+            tool_calls.append(
+                ToolCallType(
+                    id=str(tc.id),
+                    tool_name=tc.tool_name,
+                    args_redacted=tc.args_redacted,
+                    decision=DecisionType(
+                        decision=decision.decision,
+                        reason=decision.reason,
+                        created_at=decision.created_at,
+                    ) if decision else None
+                )
+            )
+
+        result = RunType(
+            id=str(run.id),
+            orchestrator=run.orchestrator,
+            created_at=run.created_at,
+            tool_calls=tool_calls,
+        )
+        db.close()
+        return result
+
+    @strawberry.field
+    def decisions(self, limit: int = 20) -> list[DecisionType]:
+        db = SessionLocal()
+        decisions = get_recent_decisions(db, limit)
+        result = [
+            DecisionType(
+                decision=d.decision,
+                reason=d.reason,
+                created_at=d.created_at
+            )
+            for d in decisions
+        ]
+        db.close()
+        return result
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)
