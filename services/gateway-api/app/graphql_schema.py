@@ -7,6 +7,12 @@ from .contracts import ToolCall
 from .policy import evaluate_policy
 from .mcp_client import call_tool
 from .metrics import tool_calls, decision_latency
+from .db.session import SessionLocal
+from .db.models import Run, ToolCall, Decision
+from .redaction import redact_args
+
+
+
 
 try:
     from strawberry.scalars import JSON as JSONScalar
@@ -63,6 +69,11 @@ class Mutation:
 
     @strawberry.mutation
     def propose_tool_call(self, tool: str, args: JSONScalar = "{}") -> ToolDecision:
+        db = SessionLocal()
+
+        run = Run(orchestrator="manual", agent_id="manual")
+        db.add(run)
+        db.flush()
         start = time.time()
 
         # Accept JSON as a string from GraphQL and parse it into a dict
@@ -78,13 +89,12 @@ class Mutation:
             decision_latency.observe((time.time() - start) * 1000)
             return ToolDecision(tool_call_id="n/a", decision="BLOCK", reason="Args must be an object (pass as JSON string)", result=None)
 
-        allowed, reason = evaluate_policy(tool, parsed_args)
+        allowed, reason, risk_score = evaluate_policy(tool, parsed_args)
+        safe_args = redact_args(parsed_args)
         if not allowed:
             tool_calls.labels(tool=tool, decision="BLOCK").inc()
             decision_latency.observe((time.time() - start) * 1000)
             return ToolDecision(tool_call_id="n/a", decision="BLOCK", reason=reason, result=None)
-
-        ToolCall(tool=tool, args=parsed_args)
         try:
             result = call_tool(tool, parsed_args)
         except requests.RequestException as exc:
@@ -112,6 +122,26 @@ class Mutation:
         tool_calls.labels(tool=tool, decision="ALLOW").inc()
         decision_latency.observe((time.time() - start) * 1000)
 
+
+
+        tool_call = ToolCall(
+            run_id=run.id,
+            tool_name=tool,
+            args_redacted=safe_args
+        )
+        db.add(tool_call)
+        db.flush()
+
+        decision = Decision(
+            tool_call_id=tool_call.id,
+            decision="ALLOW",
+            reason=reason,
+            risk_score=risk_score
+        )
+        db.add(decision)
+
+        db.commit()
+        db.close()
         return ToolDecision(tool_call_id="n/a", decision="ALLOW", reason=reason, result=result_text)
 
 
