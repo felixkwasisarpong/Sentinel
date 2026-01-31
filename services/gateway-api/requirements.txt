@@ -1,0 +1,8 @@
+fastapi
+strawberry-graphql
+uvicorn
+pydantic
+sqlalchemy
+psycopg2-binary
+prometheus-client
+requests
