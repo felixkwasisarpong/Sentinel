@@ -6,7 +6,10 @@ from .db.base import Base
 from .db.session import engine
 from .agents.langgraph_runner import build_langgraph
 from .agents.state import AgentState
-from .agents.fsm_runner import FSMRunner
+from .agents.fsm_runner import HybridFSM
+
+
+from .agents.crewai_runner import run_crewai
 
 
 
@@ -42,8 +45,10 @@ def run_agent(task: str):
 
 @app.post("/agent/fsm/run")
 def run_fsm(task: str):
-    fsm = FSMRunner(task)
+    fsm = HybridFSM(task)
     ctx = fsm.run()
-    return {
-        "final_state": ctx,
-    }
+    return ctx
+
+@app.post("/agent/crew/run")
+def run_crew(task: str):
+    return run_crewai(task)

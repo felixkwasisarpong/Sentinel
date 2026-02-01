@@ -73,10 +73,6 @@ class Mutation:
     @strawberry.mutation
     def propose_tool_call(self, tool: str, args: JSONScalar = "{}") -> ToolDecision:
         db = SessionLocal()
-
-        run = Run(orchestrator="manual", agent_id="manual")
-        db.add(run)
-        db.flush()
         start = time.time()
 
         # Accept JSON as a string from GraphQL and parse it into a dict
@@ -92,14 +88,24 @@ class Mutation:
             decision_latency.observe((time.time() - start) * 1000)
             return ToolDecision(tool_call_id="n/a", decision="BLOCK", reason="Args must be an object (pass as JSON string)", result=None)
 
-        allowed, reason, risk_score = evaluate_policy(tool, parsed_args)
-        safe_args = redact_args(parsed_args)
+        meta_args = {k: v for k, v in parsed_args.items() if str(k).startswith("__")}
+        tool_args = {k: v for k, v in parsed_args.items() if not str(k).startswith("__")}
+
+        run = Run(
+            orchestrator=meta_args.get("__orchestrator", "manual"),
+            agent_id=meta_args.get("__agent_role", "manual"),
+        )
+        db.add(run)
+        db.flush()
+
+        allowed, reason, risk_score = evaluate_policy(tool, tool_args)
+        safe_args = redact_args(tool_args)
         if not allowed:
             tool_calls.labels(tool=tool, decision="BLOCK").inc()
             decision_latency.observe((time.time() - start) * 1000)
             return ToolDecision(tool_call_id="n/a", decision="BLOCK", reason=reason, result=None)
         try:
-            result = call_tool(tool, parsed_args)
+            result = call_tool(tool, tool_args)
         except requests.RequestException as exc:
             detail = None
             if getattr(exc, "response", None) is not None:
@@ -109,10 +115,13 @@ class Mutation:
                     detail = exc.response.text
             tool_calls.labels(tool=tool, decision="BLOCK").inc()
             decision_latency.observe((time.time() - start) * 1000)
+            reason_text = detail or str(exc)
+            if not detail:
+                reason_text = f"Tool call failed: {reason_text}"
             return ToolDecision(
                 tool_call_id="n/a",
                 decision="BLOCK",
-                reason=f"Tool call failed: {detail or str(exc)}",
+                reason=reason_text,
                 result=None,
             )
 
