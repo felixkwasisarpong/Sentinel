@@ -2,9 +2,15 @@ fastapi
 strawberry-graphql
 uvicorn
 pydantic
+email-validator
 sqlalchemy
 psycopg2-binary
 prometheus-client
 requests
 langgraph
 langchain-core
+crewai
+langchain-ollama
+litellm
+apscheduler
+fastapi-sso

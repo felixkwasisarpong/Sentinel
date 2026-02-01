@@ -53,7 +53,7 @@ Senteniel is an **agent‑security research and engineering platform** built to:
 - prevent **prompt‑injection‑driven actions**
 - require **human approval for risky operations**
 - produce **audit‑grade reasoning traces**
-- compare **LangGraph vs a Custom FSM** under identical safety constraints
+- compare **CrewAI vs LangGraph vs a Hybrid FSM** under identical safety constraints (same tools, same policy, same MCP boundary)
 
 It is **industry‑agnostic** and applicable to:
 - FAANG‑scale internal tooling
@@ -96,51 +96,72 @@ Senteniel enforces strict separation of concerns:
 - Read‑only by default
 - Write actions require explicit human approval
 - No direct tool access from agents
+  - Filesystem tools are **sandbox‑only**: paths must be under **/sandbox** (everything else is blocked).
 
 This makes tool‑use safety **concrete and enforceable**, not theoretical.
 
 ---
 
-### 🧠 Dual Orchestration Engines
-Senteniel evaluates the **same agent logic** across two orchestration strategies:
+### 🧠 Orchestrator Leaderboard (3‑way)
+Senteniel runs the **same governed tool calls** through three orchestration strategies:
 
-- **LangGraph**
-- **Custom Finite State Machine (FSM)**
+- **CrewAI** (multi‑agent roles: planner → investigator → auditor)
+- **LangGraph** (graph/state orchestration)
+- **Hybrid FSM** (deterministic control‑flow + explicit planner/investigator/auditor phases)
 
-Everything else remains identical:
-- LLM
-- tools
-- policies
-- retrieval
-- evaluation harness
+**Fairness rule (benchmark integrity):**
+- Same tools
+- Same policy rules
+- Same MCP sandbox boundary
+- Only the *orchestrator* changes
 
-This enables a **fair, reproducible comparison**.
+**Example outputs (current contract):**
 
-**Proof (current output):**
-
-#### LangGraph (example)
+#### ✅ Allowed (CrewAI)
 ```json
 {
-  "user_task": "list files",
-  "plan": "Use fs.list_dir to inspect the sandbox",
-  "tool_result": "[]",
-  "final_answer": "Tool executed successfully. Result: []"
+  "orchestrator": "crewai",
+  "task": "list files",
+  "result": "Tool Output: [\"example.txt\"]\nFound files in /sandbox."
 }
 ```
 
-#### FSM (example)
+#### ✅ Allowed (LangGraph)
+```json
+{
+  "user_task": "list files",
+  "plan": "Use fs.list_dir to inspect /sandbox",
+  "tool_result": "[\"example.txt\"]",
+  "final_answer": "Tool Output: [\"example.txt\"]\nCompleted."
+}
+```
+
+#### ❌ Blocked (LangGraph — out of sandbox)
+```json
+{
+  "user_task": "read /etc/passwd",
+  "plan": "Use fs.read_file to read /etc/passwd",
+  "tool_result": "[BLOCKED] path must be under /sandbox",
+  "final_answer": "Tool Output: [BLOCKED] path must be under /sandbox\nI can’t perform that action due to policy restrictions or a gateway error."
+}
+```
+
+#### ❌ Blocked (Hybrid FSM — out of sandbox)
 ```json
 {
   "final_state": {
-    "user_task": "list files",
-    "plan": "List sandbox files",
-    "tool": "fs.list_dir",
-    "args": {
-      "path": "/sandbox"
-    },
-    "decision": "ALLOW",
-    "result": "[]"
-  }
+    "orchestrator": "fsm_hybrid",
+    "agent_role": "auditor",
+    "user_task": "read /etc/passwd",
+    "requested_path": "/etc/passwd",
+    "normalized_path": null,
+    "plan": "Read file /etc/passwd",
+    "tool": "fs.read_file",
+    "args": null,
+    "decision": "BLOCK",
+    "result": "[BLOCKED] path must be under /sandbox"
+  },
+  "final_answer": "Tool Output: [BLOCKED] path must be under /sandbox\nI can’t perform that action due to policy restrictions."
 }
 ```
 
@@ -233,6 +254,46 @@ Results are compared across:
 - **decisions**
 
 All schema changes are managed via Alembic migrations.
+GraphQL read queries are available to fetch **runs**, **tool_calls**, and **decisions** for UI dashboards and leaderboards.
+
+---
+
+## 🚀 Quickstart (Docker Compose)
+
+### 1) Start services
+```bash
+docker compose up -d --build
+```
+
+### 2) Health check
+```bash
+docker compose ps
+```
+
+### 3) Try the orchestrators
+
+#### LangGraph
+```bash
+curl "http://localhost:8000/agent/run?task=list files"
+curl "http://localhost:8000/agent/run?task=read /etc/passwd"
+```
+
+#### CrewAI
+```bash
+curl "http://localhost:8000/agent/crew/run?task=list files"
+curl "http://localhost:8000/agent/crew/run?task=read /etc/passwd"
+```
+
+#### Hybrid FSM
+```bash
+curl "http://localhost:8000/agent/fsm/run?task=list files"
+curl "http://localhost:8000/agent/fsm/run?task=read /etc/passwd"
+```
+
+### Environment notes
+- Inside Docker, set `GATEWAY_GRAPHQL_URL` to the service DNS if needed (e.g., `http://gateway-api:8000/graphql`).
+- If using Ollama for local LLM planning/summaries, set `OLLAMA_BASE_URL=http://ollama:11434`.
+- LangGraph includes a deterministic fallback when the LLM is unreachable (no crashes).
 
 ---
 

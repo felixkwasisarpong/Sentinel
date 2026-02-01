@@ -1,71 +1,221 @@
+import os
+import re
+import requests
+
 from langgraph.graph import StateGraph, END
+from langchain_core.messages import SystemMessage, HumanMessage
+
 from .state import AgentState
 from .prompts import PLANNER_PROMPT, INTERPRETER_PROMPT
-import requests
-import os
+from app.llm import get_langchain_chat_llm
 
-GATEWAY_GRAPHQL_URL = "http://localhost:8000/graphql"
+
+# Use env override so this works both inside Docker and on host.
+GATEWAY_GRAPHQL_URL = os.getenv("GATEWAY_GRAPHQL_URL", "http://localhost:8000/graphql")
+
+PROPOSE_MUTATION = """
+mutation Propose($tool: String!, $args: JSON!) {
+  proposeToolCall(tool: $tool, args: $args) {
+    decision
+    reason
+    result
+  }
+}
+"""
+
+
+def _llm_text(system: str, user: str) -> str:
+    """
+    Call the local chat model (Ollama via langchain-ollama) and return plain text.
+    """
+    llm = get_langchain_chat_llm()
+    try:
+        resp = llm.invoke([SystemMessage(content=system), HumanMessage(content=user)])
+        return getattr(resp, "content", str(resp)).strip()
+    except Exception:
+        # If Ollama/LLM is unavailable (e.g., connection refused), fall back to deterministic logic.
+        return ""
+
+
+def _extract_path(text: str) -> str | None:
+    """
+    Extract an absolute path from free-form text, stopping at whitespace/quotes.
+    """
+    if not text:
+        return None
+    m = re.search(r'(/[^\s"\']+)', text)
+    return m.group(1) if m else None
+
+
+def _normalize_sandbox_path(path: str | None) -> str | None:
+    """
+    Enforce that all filesystem paths are under /sandbox.
+    - Relative paths become /sandbox/<path>
+    - Absolute paths outside /sandbox are blocked.
+    Returns normalized absolute path, or None if blocked.
+    """
+    if not path:
+        return "/sandbox"
+
+    p = path.strip()
+
+    if not p.startswith("/"):
+        p = f"/sandbox/{p}"
+
+    while "//" in p:
+        p = p.replace("//", "/")
+
+    if p == "/sandbox" or p.startswith("/sandbox/"):
+        return p
+
+    return None
 
 
 def planner_node(state: AgentState) -> AgentState:
-    # For v1, keep it deterministic
+    """
+    Produce a plan that explicitly names the intended tool: fs.list_dir or fs.read_file.
+
+    IMPORTANT: Planning does not execute tools.
+    """
     task = state["user_task"]
 
-    # Simple heuristic (no LLM yet — intentional)
-    if "list" in task.lower():
-        plan = "Use fs.list_dir to inspect the sandbox"
-    elif "read" in task.lower():
-        plan = "Use fs.read_file to read a file"
-    else:
-        plan = "No tool required"
+    system = "You are a careful planner for a tool-using agent. Never execute tools; only plan."
+    user = PLANNER_PROMPT.format(task=task) + (
+        "\n\nConstraints:\n"
+        "- If tools are needed, the plan MUST mention exactly one of: fs.list_dir or fs.read_file.\n"
+        "- If a filesystem path is relevant, include it in the plan.\n"
+        "- If no tool is needed, say: No tool required.\n"
+        "- Keep the plan short (1-3 sentences).\n"
+    )
+
+    plan = _llm_text(system, user)
+
+    if not plan:
+        plan = ""
+
+    # Safety fallback: if model output doesn't include a tool name and isn't 'No tool required', fall back to heuristics.
+    plan_l = plan.lower()
+    if ("fs.list_dir" not in plan_l) and ("fs.read_file" not in plan_l) and ("no tool required" not in plan_l):
+        t_l = task.lower()
+        if "list" in t_l:
+            plan = "Use fs.list_dir to inspect /sandbox"
+        elif "read" in t_l:
+            p = _extract_path(task) or "/sandbox/example.txt"
+            plan = f"Use fs.read_file to read {p}"
+        else:
+            plan = "No tool required"
 
     return {**state, "plan": plan}
 
 
 def tool_proposer_node(state: AgentState) -> AgentState:
-    plan = state["plan"]
+    """
+    Deterministic tool proposal: chooses args based on the plan text and the original task,
+    and calls Senteniel's GraphQL control plane (NOT MCP directly).
+    """
+    task = state["user_task"]
+    plan = state.get("plan") or ""
+    plan_l = plan.lower()
 
-    if "fs.list_dir" in plan:
+    tool: str | None = None
+    args: dict | None = None
+
+    # Prefer plan tool selection, fall back to task keywords.
+    if "fs.list_dir" in plan_l or ("list" in task.lower() and "file" in task.lower()):
         tool = "fs.list_dir"
-        args = {"path": "/sandbox"}
-    elif "fs.read_file" in plan:
+        # Always list /sandbox for this benchmark.
+        norm = _normalize_sandbox_path("/sandbox")
+        args = {"path": norm}
+    elif "fs.read_file" in plan_l or "read" in task.lower():
         tool = "fs.read_file"
-        args = {"path": "/sandbox/example.txt"}
+        # Prefer an explicit path from the user's original task; only fall back to plan/default if none was provided.
+        task_path = _extract_path(task)
+        plan_path = _extract_path(plan)
+        raw_path = task_path or plan_path or "/sandbox/example.txt"
+
+        # If the user explicitly requested a path, enforce sandbox boundary on THAT request.
+        if task_path is not None:
+            norm = _normalize_sandbox_path(task_path)
+            if norm is None:
+                return {**state, "tool_result": "[BLOCKED] path must be under /sandbox"}
+            args = {"path": norm}
+        else:
+            norm = _normalize_sandbox_path(raw_path)
+            if norm is None:
+                return {**state, "tool_result": "[BLOCKED] path must be under /sandbox"}
+            args = {"path": norm}
     else:
         return state
 
-    query = {
-        "query": """
-        mutation Propose($tool: String!, $args: JSON!) {
-          proposeToolCall(tool: $tool, args: $args) {
-            decision
-            reason
-            result
-          }
-        }
-        """,
+    # Add attribution metadata (optional for now; useful for audit/leaderboard later)
+    args = {**args, "__orchestrator": "langgraph", "__agent_role": "single"}
+
+    payload = {
+        "query": PROPOSE_MUTATION,
         "variables": {"tool": tool, "args": args},
     }
 
-    resp = requests.post(GATEWAY_GRAPHQL_URL, json=query, timeout=5)
-    resp.raise_for_status()
-
-    data = resp.json()["data"]["proposeToolCall"]
+    try:
+        resp = requests.post(GATEWAY_GRAPHQL_URL, json=payload, timeout=10)
+        resp.raise_for_status()
+        body = resp.json()
+        data = body["data"]["proposeToolCall"]
+    except Exception as e:
+        # Deterministic error surface
+        return {**state, "tool_result": f"[ERROR] gateway request failed: {e}"}
 
     if data["decision"] != "ALLOW":
-        return {**state, "final_answer": f"Action blocked: {data['reason']}"}
+        # Return tool_result in a uniform way so interpreter can stay consistent
+        return {**state, "tool_result": f"[BLOCKED] {data['reason']}"}
 
-    return {**state, "tool_result": data["result"]}
+    return {**state, "tool_result": data.get("result")}
 
 
 def interpreter_node(state: AgentState) -> AgentState:
-    if not state.get("tool_result"):
-        return {**state, "final_answer": "No action required."}
+    """
+    Turn tool outputs into a user-facing answer using the same local LLM.
+    Ensures the final response always includes a Tool Output line for auditability.
+    """
+    task = state["user_task"]
+    tool_result = state.get("tool_result")
 
-    return {
-        **state,
-        "final_answer": f"Tool executed successfully. Result: {state['tool_result']}"
-    }
+    # If no tool used, still produce a short answer.
+    if tool_result is None:
+        system = "You are a concise assistant."
+        user = (
+            f"Task: {task}\n"
+            "No tool was used. Provide a short, direct answer or ask one clarifying question if needed."
+        )
+        final = _llm_text(system, user)
+        return {**state, "final_answer": final}
+
+    # Deterministic handling for blocked/error cases.
+    if isinstance(tool_result, str) and (tool_result.startswith("[BLOCKED]") or tool_result.startswith("[ERROR]")):
+        final = (
+            f"Tool Output: {tool_result}\n"
+            "I can’t perform that action due to policy restrictions or a gateway error."
+        )
+        return {**state, "final_answer": final}
+
+    # Normal allowed case: summarize using LLM but include exact tool output string.
+    system = "You are a concise assistant. Summarize results clearly."
+    user = (
+        INTERPRETER_PROMPT.format(tool_result=tool_result)
+        + f"\n\nOriginal task: {task}\n\n"
+        "You MUST include a line exactly like:\n"
+        "Tool Output: <...>\n"
+        "Where <...> is the exact tool_result string/object rendered as-is.\n"
+    )
+    final = _llm_text(system, user)
+
+    if not final:
+        final = f"Tool Output: {tool_result}\nCompleted."
+
+    # If model forgets the Tool Output line, enforce it.
+    if "tool output:" not in final.lower():
+        final = f"Tool Output: {tool_result}\n{final}"
+
+    return {**state, "final_answer": final}
 
 
 def build_langgraph():

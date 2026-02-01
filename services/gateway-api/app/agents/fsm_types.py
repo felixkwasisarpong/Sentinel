@@ -1,5 +1,5 @@
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -15,6 +15,12 @@ class FSMState(str, Enum):
 @dataclass
 class FSMContext:
     user_task: str
+    orchestrator: str = "fsm"
+    agent_role: str = "single"
+    requested_path: Optional[str] = None
+    normalized_path: Optional[str] = None
+    final_answer: Optional[str] = None
+
     plan: Optional[str] = None
     tool: Optional[str] = None
     args: Optional[dict] = None

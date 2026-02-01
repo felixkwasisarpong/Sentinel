@@ -1,5 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+.env.example
+
 *.py[codz]
 *$py.class
 
@@ -209,3 +211,4 @@ __marimo__/
 key
 .DS_Store
 .DS_Store
+
