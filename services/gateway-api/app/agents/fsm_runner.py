@@ -10,9 +10,13 @@ GATEWAY_GRAPHQL_URL = os.getenv("GATEWAY_GRAPHQL_URL", "http://localhost:8000/gr
 PROPOSE_MUTATION = """
 mutation Propose($tool: String!, $args: JSON!) {
   proposeToolCall(tool: $tool, args: $args) {
+    toolCallId
     decision
     reason
     result
+    policyCitations
+    incidentRefs
+    controlRefs
   }
 }
 """
@@ -66,6 +70,8 @@ class HybridFSM:
         # Distinguish hybrid in logs/leaderboard
         self.ctx.orchestrator = "fsm_hybrid"
         self.state = FSMState.INIT
+        # Full GraphQL ToolDecision payload (snake_case) for UI/leaderboard
+        self.ctx.tool_decision = None
 
     def run(self) -> dict:
         while self.state not in (FSMState.DONE,):
@@ -98,6 +104,7 @@ class HybridFSM:
                 "result": self.ctx.result,
             },
             "final_answer": getattr(self.ctx, "final_answer", None),
+            "tool_decision": getattr(self.ctx, "tool_decision", None),
         }
 
     # ---- Role: Planner ----
@@ -133,6 +140,15 @@ class HybridFSM:
             if _extract_path(self.ctx.user_task) is not None and norm is None:
                 self.ctx.decision = "BLOCK"
                 self.ctx.result = "[BLOCKED] path must be under /sandbox"
+                self.ctx.tool_decision = {
+                    "tool_call_id": "n/a",
+                    "decision": "BLOCK",
+                    "reason": "path must be under /sandbox",
+                    "result": None,
+                    "policy_citations": [],
+                    "incident_refs": [],
+                    "control_refs": [],
+                }
                 self.state = FSMState.BLOCKED
                 return
 
@@ -172,12 +188,30 @@ class HybridFSM:
             if self.ctx.requested_path and _extract_path(self.ctx.user_task) is not None and norm is None:
                 self.ctx.decision = "BLOCK"
                 self.ctx.result = "[BLOCKED] path must be under /sandbox"
+                self.ctx.tool_decision = {
+                    "tool_call_id": "n/a",
+                    "decision": "BLOCK",
+                    "reason": "path must be under /sandbox",
+                    "result": None,
+                    "policy_citations": [],
+                    "incident_refs": [],
+                    "control_refs": [],
+                }
                 self.state = FSMState.BLOCKED
                 return
 
             if norm is None:
                 self.ctx.decision = "BLOCK"
                 self.ctx.result = "[BLOCKED] path must be under /sandbox"
+                self.ctx.tool_decision = {
+                    "tool_call_id": "n/a",
+                    "decision": "BLOCK",
+                    "reason": "path must be under /sandbox",
+                    "result": None,
+                    "policy_citations": [],
+                    "incident_refs": [],
+                    "control_refs": [],
+                }
                 self.state = FSMState.BLOCKED
                 return
 
@@ -196,6 +230,17 @@ class HybridFSM:
         resp = requests.post(GATEWAY_GRAPHQL_URL, json=payload, timeout=10)
         resp.raise_for_status()
         data = resp.json()["data"]["proposeToolCall"]
+
+        tool_decision = {
+            "tool_call_id": data.get("toolCallId", "n/a"),
+            "decision": data.get("decision"),
+            "reason": data.get("reason"),
+            "result": data.get("result"),
+            "policy_citations": data.get("policyCitations") or [],
+            "incident_refs": data.get("incidentRefs") or [],
+            "control_refs": data.get("controlRefs") or [],
+        }
+        self.ctx.tool_decision = tool_decision
 
         if data["decision"] != "ALLOW":
             self.ctx.decision = "BLOCK"

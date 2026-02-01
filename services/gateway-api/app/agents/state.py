@@ -8,3 +8,4 @@ class AgentState(TypedDict):
     plan: Optional[str]
     tool_result: Optional[str]
     final_answer: Optional[str]
+    tool_decision: Optional[Dict[str, Any]]
