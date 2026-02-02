@@ -16,9 +16,13 @@ GATEWAY_GRAPHQL_URL = os.getenv("GATEWAY_GRAPHQL_URL", "http://localhost:8000/gr
 PROPOSE_MUTATION = """
 mutation Propose($tool: String!, $args: JSON!) {
   proposeToolCall(tool: $tool, args: $args) {
+    toolCallId
     decision
     reason
     result
+    policyCitations
+    incidentRefs
+    controlRefs
   }
 }
 """
@@ -136,14 +140,13 @@ def tool_proposer_node(state: AgentState) -> AgentState:
         # If the user explicitly requested a path, enforce sandbox boundary on THAT request.
         if task_path is not None:
             norm = _normalize_sandbox_path(task_path)
-            if norm is None:
-                return {**state, "tool_result": "[BLOCKED] path must be under /sandbox"}
-            args = {"path": norm}
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted
+            # and a real tool_call_id is returned.
+            args = {"path": task_path if norm is None else norm}
         else:
             norm = _normalize_sandbox_path(raw_path)
-            if norm is None:
-                return {**state, "tool_result": "[BLOCKED] path must be under /sandbox"}
-            args = {"path": norm}
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted.
+            args = {"path": raw_path if norm is None else norm}
     else:
         return state
 
@@ -161,14 +164,33 @@ def tool_proposer_node(state: AgentState) -> AgentState:
         body = resp.json()
         data = body["data"]["proposeToolCall"]
     except Exception as e:
+        tool_decision = {
+            "tool_call_id": "n/a",
+            "decision": "BLOCK",
+            "reason": f"gateway request failed: {e}",
+            "result": None,
+            "policy_citations": [],
+            "incident_refs": [],
+            "control_refs": [],
+        }
         # Deterministic error surface
-        return {**state, "tool_result": f"[ERROR] gateway request failed: {e}"}
+        return {**state, "tool_result": f"[ERROR] gateway request failed: {e}", "tool_decision": tool_decision}
+
+    tool_decision = {
+        "tool_call_id": data.get("toolCallId", "n/a"),
+        "decision": data.get("decision"),
+        "reason": data.get("reason"),
+        "result": data.get("result"),
+        "policy_citations": data.get("policyCitations") or [],
+        "incident_refs": data.get("incidentRefs") or [],
+        "control_refs": data.get("controlRefs") or [],
+    }
 
     if data["decision"] != "ALLOW":
         # Return tool_result in a uniform way so interpreter can stay consistent
-        return {**state, "tool_result": f"[BLOCKED] {data['reason']}"}
+        return {**state, "tool_result": f"[BLOCKED] {data['reason']}", "tool_decision": tool_decision}
 
-    return {**state, "tool_result": data.get("result")}
+    return {**state, "tool_result": data.get("result"), "tool_decision": tool_decision}
 
 
 def interpreter_node(state: AgentState) -> AgentState:

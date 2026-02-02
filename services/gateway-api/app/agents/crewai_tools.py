@@ -10,9 +10,13 @@ GATEWAY_GRAPHQL_URL = os.getenv("GATEWAY_GRAPHQL_URL", DEFAULT_GQL)
 PROPOSE_MUTATION = """
 mutation Propose($tool: String!, $args: JSON!) {
   proposeToolCall(tool: $tool, args: $args) {
+    toolCallId
     decision
     reason
     result
+    policyCitations
+    incidentRefs
+    controlRefs
   }
 }
 """
@@ -43,14 +47,18 @@ def _normalize_sandbox_path(path: str) -> str | None:
 
     return None
 
-def _propose(tool: str, args: dict, agent_role: str) -> str:
+def _propose_raw(tool: str, args: dict, agent_role: str) -> dict:
     # (Optional) include agent role in args for now; later we’ll store it in DB columns
     args = {**args, "__agent_role": agent_role, "__orchestrator": "crewai"}
 
     payload = {"query": PROPOSE_MUTATION, "variables": {"tool": tool, "args": args}}
     r = requests.post(GATEWAY_GRAPHQL_URL, json=payload, timeout=10)
     r.raise_for_status()
-    data = r.json()["data"]["proposeToolCall"]
+    return r.json()["data"]["proposeToolCall"]
+
+
+def _propose(tool: str, args: dict, agent_role: str) -> str:
+    data = _propose_raw(tool, args, agent_role)
 
     if data["decision"] != "ALLOW":
         return f"[BLOCKED] {data['reason']}"
@@ -70,6 +78,34 @@ def propose_tool_call(tool: str, args: dict, agent_role: str) -> str:
         args = {**args, "path": norm}
 
     return _propose(tool, args, agent_role)
+
+
+def propose_tool_decision(tool: str, args: dict, agent_role: str) -> dict:
+    # Enforce sandbox boundary for filesystem tools
+    if tool in ("fs.list_dir", "fs.read_file"):
+        norm = _normalize_sandbox_path(str(args.get("path", "")))
+        if norm is None:
+            return {
+                "tool_call_id": "n/a",
+                "decision": "BLOCK",
+                "reason": "path must be under /sandbox",
+                "result": None,
+                "policy_citations": [],
+                "incident_refs": [],
+                "control_refs": [],
+            }
+        args = {**args, "path": norm}
+
+    data = _propose_raw(tool, args, agent_role)
+    return {
+        "tool_call_id": data.get("toolCallId", "n/a"),
+        "decision": data.get("decision"),
+        "reason": data.get("reason"),
+        "result": data.get("result"),
+        "policy_citations": data.get("policyCitations") or [],
+        "incident_refs": data.get("incidentRefs") or [],
+        "control_refs": data.get("controlRefs") or [],
+    }
 
 
 class ListDirInput(BaseModel):

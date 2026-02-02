@@ -10,9 +10,13 @@ GATEWAY_GRAPHQL_URL = os.getenv("GATEWAY_GRAPHQL_URL", "http://localhost:8000/gr
 PROPOSE_MUTATION = """
 mutation Propose($tool: String!, $args: JSON!) {
   proposeToolCall(tool: $tool, args: $args) {
+    toolCallId
     decision
     reason
     result
+    policyCitations
+    incidentRefs
+    controlRefs
   }
 }
 """
@@ -66,6 +70,8 @@ class HybridFSM:
         # Distinguish hybrid in logs/leaderboard
         self.ctx.orchestrator = "fsm_hybrid"
         self.state = FSMState.INIT
+        # Full GraphQL ToolDecision payload (snake_case) for UI/leaderboard
+        self.ctx.tool_decision = None
 
     def run(self) -> dict:
         while self.state not in (FSMState.DONE,):
@@ -98,6 +104,7 @@ class HybridFSM:
                 "result": self.ctx.result,
             },
             "final_answer": getattr(self.ctx, "final_answer", None),
+            "tool_decision": getattr(self.ctx, "tool_decision", None),
         }
 
     # ---- Role: Planner ----
@@ -129,15 +136,10 @@ class HybridFSM:
             self.ctx.plan = f"Read file {requested}"
             self.ctx.tool = "fs.read_file"
 
-            # If the user explicitly requested an out-of-sandbox path, block deterministically.
-            if _extract_path(self.ctx.user_task) is not None and norm is None:
-                self.ctx.decision = "BLOCK"
-                self.ctx.result = "[BLOCKED] path must be under /sandbox"
-                self.state = FSMState.BLOCKED
-                return
-
-            # Otherwise, use normalized (or safe default)
-            safe_path = norm or "/sandbox/example.txt"
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted
+            # and return a real tool_call_id.
+            # If out-of-sandbox, pass the raw requested path; gateway policy will BLOCK and log it.
+            safe_path = requested if norm is None else norm
             self.ctx.args = {
                 "path": safe_path,
                 "__orchestrator": self.ctx.orchestrator,
@@ -168,22 +170,12 @@ class HybridFSM:
 
             norm = _normalize_sandbox_path(raw)
 
-            # If the user explicitly requested a path and it's outside sandbox, block.
-            if self.ctx.requested_path and _extract_path(self.ctx.user_task) is not None and norm is None:
-                self.ctx.decision = "BLOCK"
-                self.ctx.result = "[BLOCKED] path must be under /sandbox"
-                self.state = FSMState.BLOCKED
-                return
-
-            if norm is None:
-                self.ctx.decision = "BLOCK"
-                self.ctx.result = "[BLOCKED] path must be under /sandbox"
-                self.state = FSMState.BLOCKED
-                return
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted.
+            # If out-of-sandbox, pass raw path through; policy will BLOCK and log it.
 
             self.ctx.args = {
                 **(self.ctx.args or {}),
-                "path": norm,
+                "path": raw if norm is None else norm,
                 "__orchestrator": self.ctx.orchestrator,
                 "__agent_role": self.ctx.agent_role,
             }
@@ -196,6 +188,17 @@ class HybridFSM:
         resp = requests.post(GATEWAY_GRAPHQL_URL, json=payload, timeout=10)
         resp.raise_for_status()
         data = resp.json()["data"]["proposeToolCall"]
+
+        tool_decision = {
+            "tool_call_id": data.get("toolCallId", "n/a"),
+            "decision": data.get("decision"),
+            "reason": data.get("reason"),
+            "result": data.get("result"),
+            "policy_citations": data.get("policyCitations") or [],
+            "incident_refs": data.get("incidentRefs") or [],
+            "control_refs": data.get("controlRefs") or [],
+        }
+        self.ctx.tool_decision = tool_decision
 
         if data["decision"] != "ALLOW":
             self.ctx.decision = "BLOCK"

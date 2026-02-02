@@ -2,3 +2,4 @@ mcp
 pydantic
 fastapi
 uvicorn[standard]
+neo4j
