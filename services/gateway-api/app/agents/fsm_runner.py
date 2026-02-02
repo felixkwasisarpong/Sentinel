@@ -136,24 +136,10 @@ class HybridFSM:
             self.ctx.plan = f"Read file {requested}"
             self.ctx.tool = "fs.read_file"
 
-            # If the user explicitly requested an out-of-sandbox path, block deterministically.
-            if _extract_path(self.ctx.user_task) is not None and norm is None:
-                self.ctx.decision = "BLOCK"
-                self.ctx.result = "[BLOCKED] path must be under /sandbox"
-                self.ctx.tool_decision = {
-                    "tool_call_id": "n/a",
-                    "decision": "BLOCK",
-                    "reason": "path must be under /sandbox",
-                    "result": None,
-                    "policy_citations": [],
-                    "incident_refs": [],
-                    "control_refs": [],
-                }
-                self.state = FSMState.BLOCKED
-                return
-
-            # Otherwise, use normalized (or safe default)
-            safe_path = norm or "/sandbox/example.txt"
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted
+            # and return a real tool_call_id.
+            # If out-of-sandbox, pass the raw requested path; gateway policy will BLOCK and log it.
+            safe_path = requested if norm is None else norm
             self.ctx.args = {
                 "path": safe_path,
                 "__orchestrator": self.ctx.orchestrator,
@@ -184,40 +170,12 @@ class HybridFSM:
 
             norm = _normalize_sandbox_path(raw)
 
-            # If the user explicitly requested a path and it's outside sandbox, block.
-            if self.ctx.requested_path and _extract_path(self.ctx.user_task) is not None and norm is None:
-                self.ctx.decision = "BLOCK"
-                self.ctx.result = "[BLOCKED] path must be under /sandbox"
-                self.ctx.tool_decision = {
-                    "tool_call_id": "n/a",
-                    "decision": "BLOCK",
-                    "reason": "path must be under /sandbox",
-                    "result": None,
-                    "policy_citations": [],
-                    "incident_refs": [],
-                    "control_refs": [],
-                }
-                self.state = FSMState.BLOCKED
-                return
-
-            if norm is None:
-                self.ctx.decision = "BLOCK"
-                self.ctx.result = "[BLOCKED] path must be under /sandbox"
-                self.ctx.tool_decision = {
-                    "tool_call_id": "n/a",
-                    "decision": "BLOCK",
-                    "reason": "path must be under /sandbox",
-                    "result": None,
-                    "policy_citations": [],
-                    "incident_refs": [],
-                    "control_refs": [],
-                }
-                self.state = FSMState.BLOCKED
-                return
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted.
+            # If out-of-sandbox, pass raw path through; policy will BLOCK and log it.
 
             self.ctx.args = {
                 **(self.ctx.args or {}),
-                "path": norm,
+                "path": raw if norm is None else norm,
                 "__orchestrator": self.ctx.orchestrator,
                 "__agent_role": self.ctx.agent_role,
             }

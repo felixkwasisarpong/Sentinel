@@ -2,7 +2,14 @@ import re
 
 from crewai import Agent, Task, Crew, Process
 from .crewai_tools import FSListDirTool, FSReadFileTool, propose_tool_decision
-from app.llm import get_crewai_llm  # <-- add this
+
+# Optional: if crewai_tools.py exposes LAST_TOOL_DECISION, we can attach it for full crew kickoff runs.
+try:
+    from .crewai_tools import LAST_TOOL_DECISION
+except Exception:
+    LAST_TOOL_DECISION = None
+
+from app.llm import get_crewai_llm
 
 
 def _extract_path(task: str) -> str | None:
@@ -29,7 +36,25 @@ def run_crewai(task: str) -> dict:
     forced = _select_tool(task)
     if forced:
         tool, args = forced
-        return propose_tool_decision(tool, args, "investigator")
+        td = propose_tool_decision(tool, args, "investigator")
+
+        # Normalize tool output string for the user-facing result line
+        if td.get("decision") == "ALLOW":
+            tool_output = td.get("result")
+            rendered = f"Tool Output: {tool_output}\nCompleted."
+        else:
+            tool_output = f"[BLOCKED] {td.get('reason')}"
+            rendered = (
+                f"Tool Output: {tool_output}\n"
+                "I can't perform that action due to policy restrictions."
+            )
+
+        return {
+            "orchestrator": "crewai",
+            "task": task,
+            "result": rendered,
+            "tool_decision": td,
+        }
 
     llm = get_crewai_llm()
 
@@ -103,11 +128,8 @@ def run_crewai(task: str) -> dict:
     result = crew.kickoff()
 
     return {
-        "tool_call_id": "n/a",
-        "decision": "ALLOW",
-        "reason": "No tool required",
+        "orchestrator": "crewai",
+        "task": task,
         "result": str(result),
-        "policy_citations": [],
-        "incident_refs": [],
-        "control_refs": [],
+        "tool_decision": LAST_TOOL_DECISION,
     }

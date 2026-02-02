@@ -140,32 +140,13 @@ def tool_proposer_node(state: AgentState) -> AgentState:
         # If the user explicitly requested a path, enforce sandbox boundary on THAT request.
         if task_path is not None:
             norm = _normalize_sandbox_path(task_path)
-            if norm is None:
-                tool_decision = {
-                    "tool_call_id": "n/a",
-                    "decision": "BLOCK",
-                    "reason": "path must be under /sandbox",
-                    "result": None,
-                    "policy_citations": [],
-                    "incident_refs": [],
-                    "control_refs": [],
-                }
-                return {**state, "tool_result": "[BLOCKED] path must be under /sandbox", "tool_decision": tool_decision}
-            args = {"path": norm}
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted
+            # and a real tool_call_id is returned.
+            args = {"path": task_path if norm is None else norm}
         else:
             norm = _normalize_sandbox_path(raw_path)
-            if norm is None:
-                tool_decision = {
-                    "tool_call_id": "n/a",
-                    "decision": "BLOCK",
-                    "reason": "path must be under /sandbox",
-                    "result": None,
-                    "policy_citations": [],
-                    "incident_refs": [],
-                    "control_refs": [],
-                }
-                return {**state, "tool_result": "[BLOCKED] path must be under /sandbox", "tool_decision": tool_decision}
-            args = {"path": norm}
+            # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted.
+            args = {"path": raw_path if norm is None else norm}
     else:
         return state
 
