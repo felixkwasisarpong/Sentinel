@@ -115,14 +115,23 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
 - Same MCP sandbox boundary
 - Only the *orchestrator* changes
 
-**Example outputs (current contract):**
+**Example outputs (current unified contract):**
 
 #### ✅ Allowed (CrewAI)
 ```json
 {
   "orchestrator": "crewai",
   "task": "list files",
-  "result": "Tool Output: [\"example.txt\"]\nFound files in /sandbox."
+  "result": "Tool Output: [\"example.txt\"]\nCompleted.",
+  "tool_decision": {
+    "tool_call_id": "<uuid>",
+    "decision": "ALLOW",
+    "reason": "ok",
+    "result": "[\"example.txt\"]",
+    "policy_citations": [],
+    "incident_refs": [],
+    "control_refs": []
+  }
 }
 ```
 
@@ -132,7 +141,16 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
   "user_task": "list files",
   "plan": "Use fs.list_dir to inspect /sandbox",
   "tool_result": "[\"example.txt\"]",
-  "final_answer": "Tool Output: [\"example.txt\"]\nCompleted."
+  "final_answer": "Tool Output: [\"example.txt\"]\nCompleted.",
+  "tool_decision": {
+    "tool_call_id": "<uuid>",
+    "decision": "ALLOW",
+    "reason": "ok",
+    "result": "[\"example.txt\"]",
+    "policy_citations": [],
+    "incident_refs": [],
+    "control_refs": []
+  }
 }
 ```
 
@@ -142,7 +160,16 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
   "user_task": "read /etc/passwd",
   "plan": "Use fs.read_file to read /etc/passwd",
   "tool_result": "[BLOCKED] path must be under /sandbox",
-  "final_answer": "Tool Output: [BLOCKED] path must be under /sandbox\nI can’t perform that action due to policy restrictions or a gateway error."
+  "final_answer": "Tool Output: [BLOCKED] path must be under /sandbox\nI can’t perform that action due to policy restrictions or a gateway error.",
+  "tool_decision": {
+    "tool_call_id": "<uuid>",
+    "decision": "BLOCK",
+    "reason": "path must be under /sandbox",
+    "result": null,
+    "policy_citations": [],
+    "incident_refs": [],
+    "control_refs": []
+  }
 }
 ```
 
@@ -157,11 +184,22 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
     "normalized_path": null,
     "plan": "Read file /etc/passwd",
     "tool": "fs.read_file",
-    "args": null,
+    "args": {
+      "path": "/etc/passwd"
+    },
     "decision": "BLOCK",
     "result": "[BLOCKED] path must be under /sandbox"
   },
-  "final_answer": "Tool Output: [BLOCKED] path must be under /sandbox\nI can’t perform that action due to policy restrictions."
+  "final_answer": "Tool Output: [BLOCKED] path must be under /sandbox\nI can’t perform that action due to policy restrictions.",
+  "tool_decision": {
+    "tool_call_id": "<uuid>",
+    "decision": "BLOCK",
+    "reason": "path must be under /sandbox",
+    "result": null,
+    "policy_citations": [],
+    "incident_refs": [],
+    "control_refs": []
+  }
 }
 ```
 
@@ -184,6 +222,7 @@ Every tool proposal produces a durable record:
 - policy citations
 - risk score
 - redacted tool arguments
+- **audit-grade BLOCK attempts** (even out-of-sandbox requests are persisted with a real tool_call_id)
 - timestamps
 
 Nothing is implicit. Nothing is hidden.
@@ -271,6 +310,7 @@ docker compose ps
 ```
 
 ### 3) Try the orchestrators
+> Tip: append `| jq` to pretty-print JSON and inspect `tool_decision` fields.
 
 #### LangGraph
 ```bash
