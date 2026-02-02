@@ -245,6 +245,42 @@ Results are compared across:
 
 ---
 
+## 🧪 Eval Harness & CI Gate (Phase 3)
+
+Senteniel includes an evaluation harness that runs the **same task suite** across all orchestrators and produces a markdown leaderboard.
+
+**Planned repo layout (Phase 3):**
+```text
+eval/
+  tasks.jsonl          # test cases (ALLOW/BLOCK expectations)
+  run_eval.py          # runs tasks against all orchestrators, writes results.json
+  score.py             # computes metrics + writes LEADERBOARD.md
+  LEADERBOARD.md       # generated artifact
+.github/workflows/
+  eval.yml             # CI gate (fails if safety regresses)
+```
+
+**What it measures:**
+- safety pass rate (BLOCK stays BLOCK)
+- utility pass rate (ALLOW succeeds)
+- overall accuracy
+- p50/p95 latency
+- audit completeness (tool_call_id present for BLOCK/ALLOW)
+
+**How to run locally (once Phase 3 files are added):**
+```bash
+make eval
+# or:
+python eval/run_eval.py
+python eval/score.py
+```
+
+**CI gate idea:**
+- Fail PRs if any task that is expected to be **BLOCK** becomes **ALLOW**.
+- Upload `eval/LEADERBOARD.md` as an artifact for reviewers.
+
+---
+
 ## 🧩 System Architecture
 
 ```
@@ -302,6 +338,17 @@ GraphQL read queries are available to fetch **runs**, **tool_calls**, and **deci
 ### 1) Start services
 ```bash
 docker compose up -d --build
+```
+
+### 1A) Using the Makefile (recommended)
+If you prefer one‑liners:
+
+```bash
+make up        # docker compose up -d --build
+make ps        # show running containers
+make eval      # run eval suite + generate leaderboard (Phase 3)
+make down      # stop services
+make clean     # stop + remove volumes
 ```
 
 ### 2) Health check
@@ -372,8 +419,8 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 - Persisted audit logs with GraphQL read queries (runs, tool calls, decisions)
 
 ### 🚧 Phase 1 — Orchestration Comparison
-- ✅ LangGraph runner (single-agent) — `POST /agent/run?task=...`
-- ✅ FSM runner (deterministic baseline) — `POST /agent/fsm/run?task=...`
+- ✅ LangGraph runner (single-agent) — `GET /agent/run?task=...`
+- ✅ FSM runner (deterministic baseline) — `GET /agent/fsm/run?task=...`
 - ✅ Fairness rule enforced: same tools, same policies, same MCP boundary; only orchestrator differs
 
 ### 🚧 Phase 2 — GraphRAG Proof Mode
@@ -381,12 +428,53 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 - Incident grounding
 - Decision explanation graphs
 
-### 🚧 Phase 3 — Evaluation Harness
-- Prompt‑injection test suite
-- Leaderboards
-- Regression safety tests
+### 🚧 Phase 3 — Evaluation Harness (next)
+- Task suite (`eval/tasks.jsonl`) covering utility + safety cases
+- Runner + scorer scripts (generate `eval/LEADERBOARD.md`)
+- CI regression gate (`.github/workflows/eval.yml`) that blocks safety regressions
 
 ---
+
+---
+
+## 🧭 What’s Next (Planned)
+
+You already have the **platform spine** working (MCP boundary + audit DB + unified ToolDecision contract). The next milestones focus on making Senteniel **measurable**, **explainable**, and **useful** for real security/infra teams.
+
+### 1) Phase 2A — Neo4j “Policy Graph” MVP (GraphRAG without LLM summarization)
+- Model a minimal policy graph in Neo4j:
+  - **Policy** nodes (e.g., `P-SANDBOX-001`)
+  - **Control** nodes (e.g., `C-SANDBOX-BOUNDARY`)
+  - **Incident** nodes (e.g., `I-EXFIL-001`)
+  - relationships: `ENFORCES`, `VIOLATED_BY`, `MITIGATES`, `REFERS_TO`
+- Add a gateway retrieval step that returns **IDs only** (no LLM) as:
+  - `policyCitations[]`, `incidentRefs[]`, `controlRefs[]`
+- Seed a small dataset so citations become non-empty in real runs.
+
+### 2) Phase 2B — GraphRAG “Proof Mode” (grounded decision explanations)
+- Expand retrieval to include short, structured evidence objects (still grounded):
+  - `policy_id`, `title`, `severity`, `rationale`
+- Emit “why” traces that reference prior incidents and controls (no free-form hallucinated explanations).
+
+### 3) Phase 3 — Eval Harness + CI Safety Gate
+- Add `eval/tasks.jsonl` covering utility + safety cases (prompt-injection attempts included).
+- Add `run_eval.py` + `score.py` to generate `eval/LEADERBOARD.md`.
+- Add `.github/workflows/eval.yml` to fail PRs if **BLOCK ⇒ ALLOW** regressions occur.
+
+### 4) Phase 4 — UI Dashboards (Security/SRE friendly)
+- Runs dashboard: latest runs, decisions, latency, blocked vs allowed.
+- Decision trace viewer: citations + tool args (redacted) + timestamps.
+- Leaderboard page: compare orchestrators on safety/utility/latency.
+
+### 5) Phase 5 — Runbooks as Tools + Human-in-the-Loop Approvals
+- Represent runbooks as governed tools (e.g., “rotate key”, “restart service”, “open incident”).
+- Add an approval queue flow for destructive actions:
+  - **APPROVAL_REQUIRED** → reviewer approves/denies → decision is persisted.
+
+### 6) Phase 6 — Security Hardening & Realistic Threat Tests
+- Prompt-injection and tool-confusion test pack (beyond filesystem).
+- Rate limits, per-role allowlists, and stricter arg schemas.
+- Optional OPA/Casbin policy profiles for different environments (dev/staging/prod).
 
 ## 📌 Status
 
