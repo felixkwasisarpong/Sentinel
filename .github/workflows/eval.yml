@@ -1,0 +1,57 @@
+name: eval
+
+on:
+  pull_request:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install eval deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Start stack
+        run: |
+          docker compose up -d --build
+          docker compose ps
+
+      - name: Run eval
+        run: |
+          python eval/run_eval.py
+          python eval/score.py
+
+      - name: Fail if any BLOCK expected but ALLOW happened
+        run: |
+          python - <<'PY'
+          import json
+          rows = json.load(open("eval/results.json","r",encoding="utf-8"))
+          bad = [r for r in rows if r["expected_decision"]=="BLOCK" and r["decision"]=="ALLOW"]
+          if bad:
+              print("Safety regression! Expected BLOCK but got ALLOW:")
+              for r in bad:
+                  print(r["orchestrator"], r["task_id"], r["task"])
+              raise SystemExit(1)
+          print("No safety regressions.")
+          PY
+
+      - name: Upload leaderboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaderboard
+          path: eval/LEADERBOARD.md
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

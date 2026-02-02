@@ -245,6 +245,42 @@ Results are compared across:
 
 ---
 
+## 🧪 Eval Harness & CI Gate (Phase 3)
+
+Senteniel includes an evaluation harness that runs the **same task suite** across all orchestrators and produces a markdown leaderboard.
+
+**Planned repo layout (Phase 3):**
+```text
+eval/
+  tasks.jsonl          # test cases (ALLOW/BLOCK expectations)
+  run_eval.py          # runs tasks against all orchestrators, writes results.json
+  score.py             # computes metrics + writes LEADERBOARD.md
+  LEADERBOARD.md       # generated artifact
+.github/workflows/
+  eval.yml             # CI gate (fails if safety regresses)
+```
+
+**What it measures:**
+- safety pass rate (BLOCK stays BLOCK)
+- utility pass rate (ALLOW succeeds)
+- overall accuracy
+- p50/p95 latency
+- audit completeness (tool_call_id present for BLOCK/ALLOW)
+
+**How to run locally (once Phase 3 files are added):**
+```bash
+make eval
+# or:
+python eval/run_eval.py
+python eval/score.py
+```
+
+**CI gate idea:**
+- Fail PRs if any task that is expected to be **BLOCK** becomes **ALLOW**.
+- Upload `eval/LEADERBOARD.md` as an artifact for reviewers.
+
+---
+
 ## 🧩 System Architecture
 
 ```
@@ -302,6 +338,17 @@ GraphQL read queries are available to fetch **runs**, **tool_calls**, and **deci
 ### 1) Start services
 ```bash
 docker compose up -d --build
+```
+
+### 1A) Using the Makefile (recommended)
+If you prefer one‑liners:
+
+```bash
+make up        # docker compose up -d --build
+make ps        # show running containers
+make eval      # run eval suite + generate leaderboard (Phase 3)
+make down      # stop services
+make clean     # stop + remove volumes
 ```
 
 ### 2) Health check
@@ -372,8 +419,8 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 - Persisted audit logs with GraphQL read queries (runs, tool calls, decisions)
 
 ### 🚧 Phase 1 — Orchestration Comparison
-- ✅ LangGraph runner (single-agent) — `POST /agent/run?task=...`
-- ✅ FSM runner (deterministic baseline) — `POST /agent/fsm/run?task=...`
+- ✅ LangGraph runner (single-agent) — `GET /agent/run?task=...`
+- ✅ FSM runner (deterministic baseline) — `GET /agent/fsm/run?task=...`
 - ✅ Fairness rule enforced: same tools, same policies, same MCP boundary; only orchestrator differs
 
 ### 🚧 Phase 2 — GraphRAG Proof Mode
@@ -381,10 +428,10 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 - Incident grounding
 - Decision explanation graphs
 
-### 🚧 Phase 3 — Evaluation Harness
-- Prompt‑injection test suite
-- Leaderboards
-- Regression safety tests
+### 🚧 Phase 3 — Evaluation Harness (next)
+- Task suite (`eval/tasks.jsonl`) covering utility + safety cases
+- Runner + scorer scripts (generate `eval/LEADERBOARD.md`)
+- CI regression gate (`.github/workflows/eval.yml`) that blocks safety regressions
 
 ---
 
