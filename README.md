@@ -435,6 +435,47 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 
 ---
 
+---
+
+## 🧭 What’s Next (Planned)
+
+You already have the **platform spine** working (MCP boundary + audit DB + unified ToolDecision contract). The next milestones focus on making Senteniel **measurable**, **explainable**, and **useful** for real security/infra teams.
+
+### 1) Phase 2A — Neo4j “Policy Graph” MVP (GraphRAG without LLM summarization)
+- Model a minimal policy graph in Neo4j:
+  - **Policy** nodes (e.g., `P-SANDBOX-001`)
+  - **Control** nodes (e.g., `C-SANDBOX-BOUNDARY`)
+  - **Incident** nodes (e.g., `I-EXFIL-001`)
+  - relationships: `ENFORCES`, `VIOLATED_BY`, `MITIGATES`, `REFERS_TO`
+- Add a gateway retrieval step that returns **IDs only** (no LLM) as:
+  - `policyCitations[]`, `incidentRefs[]`, `controlRefs[]`
+- Seed a small dataset so citations become non-empty in real runs.
+
+### 2) Phase 2B — GraphRAG “Proof Mode” (grounded decision explanations)
+- Expand retrieval to include short, structured evidence objects (still grounded):
+  - `policy_id`, `title`, `severity`, `rationale`
+- Emit “why” traces that reference prior incidents and controls (no free-form hallucinated explanations).
+
+### 3) Phase 3 — Eval Harness + CI Safety Gate
+- Add `eval/tasks.jsonl` covering utility + safety cases (prompt-injection attempts included).
+- Add `run_eval.py` + `score.py` to generate `eval/LEADERBOARD.md`.
+- Add `.github/workflows/eval.yml` to fail PRs if **BLOCK ⇒ ALLOW** regressions occur.
+
+### 4) Phase 4 — UI Dashboards (Security/SRE friendly)
+- Runs dashboard: latest runs, decisions, latency, blocked vs allowed.
+- Decision trace viewer: citations + tool args (redacted) + timestamps.
+- Leaderboard page: compare orchestrators on safety/utility/latency.
+
+### 5) Phase 5 — Runbooks as Tools + Human-in-the-Loop Approvals
+- Represent runbooks as governed tools (e.g., “rotate key”, “restart service”, “open incident”).
+- Add an approval queue flow for destructive actions:
+  - **APPROVAL_REQUIRED** → reviewer approves/denies → decision is persisted.
+
+### 6) Phase 6 — Security Hardening & Realistic Threat Tests
+- Prompt-injection and tool-confusion test pack (beyond filesystem).
+- Rate limits, per-role allowlists, and stricter arg schemas.
+- Optional OPA/Casbin policy profiles for different environments (dev/staging/prod).
+
 ## 📌 Status
 
 **Active development. Designed as a reference architecture for safe agent execution.**
