@@ -1,7 +1,7 @@
 import re
 
 from crewai import Agent, Task, Crew, Process
-from .crewai_tools import FSListDirTool, FSReadFileTool, propose_tool_decision
+from .crewai_tools import FSListDirTool, FSReadFileTool, FSWriteFileTool, propose_tool_decision
 
 # Optional: if crewai_tools.py exposes LAST_TOOL_DECISION, we can attach it for full crew kickoff runs.
 try:
@@ -17,6 +17,21 @@ def _extract_path(task: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _extract_write_content(task: str) -> str:
+    if not task:
+        return ""
+    m = re.search(r'write\s+(.+?)\s+to\s+(/[^\s"\']+)', task, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    m = re.search(r'write\s+(.+?)\s+into\s+(/[^\s"\']+)', task, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    m = re.search(r'write\s+(.+)$', task, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    return ""
+
+
 def _select_tool(task: str) -> tuple[str, dict] | None:
     task_l = task.lower()
 
@@ -28,6 +43,11 @@ def _select_tool(task: str) -> tuple[str, dict] | None:
     path = _extract_path(task)
     if "read" in task_l and ("file" in task_l or path):
         return "fs.read_file", {"path": path or "/sandbox/example.txt"}
+
+    if "write" in task_l:
+        path = _extract_path(task) or "/sandbox/hello.txt"
+        content = _extract_write_content(task)
+        return "fs.write_file", {"path": path, "content": content}
 
     return None
 
@@ -71,7 +91,7 @@ def run_crewai(task: str) -> dict:
         role="Investigator",
         goal="Gather evidence using only safe, governed tools.",
         backstory="You only use the provided tools and you respect BLOCKED results.",
-        tools=[FSListDirTool("investigator"), FSReadFileTool("investigator")],
+        tools=[FSListDirTool("investigator"), FSReadFileTool("investigator"), FSWriteFileTool("investigator")],
         llm=llm,
         verbose=False,
         allow_delegation=False,

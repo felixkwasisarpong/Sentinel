@@ -51,6 +51,21 @@ def _extract_path(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _extract_write_content(text: str) -> str:
+    if not text:
+        return ""
+    m = re.search(r'write\s+(.+?)\s+to\s+(/[^\s"\']+)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    m = re.search(r'write\s+(.+?)\s+into\s+(/[^\s"\']+)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    m = re.search(r'write\s+(.+)$', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    return ""
+
+
 def _normalize_sandbox_path(path: str | None) -> str | None:
     """
     Enforce that all filesystem paths are under /sandbox.
@@ -77,7 +92,7 @@ def _normalize_sandbox_path(path: str | None) -> str | None:
 
 def planner_node(state: AgentState) -> AgentState:
     """
-    Produce a plan that explicitly names the intended tool: fs.list_dir or fs.read_file.
+    Produce a plan that explicitly names the intended tool: fs.list_dir, fs.read_file, or fs.write_file.
 
     IMPORTANT: Planning does not execute tools.
     """
@@ -86,7 +101,7 @@ def planner_node(state: AgentState) -> AgentState:
     system = "You are a careful planner for a tool-using agent. Never execute tools; only plan."
     user = PLANNER_PROMPT.format(task=task) + (
         "\n\nConstraints:\n"
-        "- If tools are needed, the plan MUST mention exactly one of: fs.list_dir or fs.read_file.\n"
+        "- If tools are needed, the plan MUST mention exactly one of: fs.list_dir, fs.read_file, or fs.write_file.\n"
         "- If a filesystem path is relevant, include it in the plan.\n"
         "- If no tool is needed, say: No tool required.\n"
         "- Keep the plan short (1-3 sentences).\n"
@@ -99,13 +114,16 @@ def planner_node(state: AgentState) -> AgentState:
 
     # Safety fallback: if model output doesn't include a tool name and isn't 'No tool required', fall back to heuristics.
     plan_l = plan.lower()
-    if ("fs.list_dir" not in plan_l) and ("fs.read_file" not in plan_l) and ("no tool required" not in plan_l):
+    if ("fs.list_dir" not in plan_l) and ("fs.read_file" not in plan_l) and ("fs.write_file" not in plan_l) and ("no tool required" not in plan_l):
         t_l = task.lower()
         if "list" in t_l:
             plan = "Use fs.list_dir to inspect /sandbox"
         elif "read" in t_l:
             p = _extract_path(task) or "/sandbox/example.txt"
             plan = f"Use fs.read_file to read {p}"
+        elif "write" in t_l:
+            p = _extract_path(task) or "/sandbox/hello.txt"
+            plan = f"Use fs.write_file to write to {p}"
         else:
             plan = "No tool required"
 
@@ -147,6 +165,26 @@ def tool_proposer_node(state: AgentState) -> AgentState:
             norm = _normalize_sandbox_path(raw_path)
             # Audit-grade: do not short-circuit. Always call GraphQL so BLOCK attempts are persisted.
             args = {"path": raw_path if norm is None else norm}
+    elif "fs.write_file" in plan_l or "write" in task.lower():
+        tool = "fs.write_file"
+        task_path = _extract_path(task)
+        plan_path = _extract_path(plan)
+        raw_path = task_path or plan_path or "/sandbox/hello.txt"
+
+        content = _extract_write_content(task)
+
+        if task_path is not None:
+            norm = _normalize_sandbox_path(task_path)
+            args = {
+                "path": task_path if norm is None else norm,
+                "content": content,
+            }
+        else:
+            norm = _normalize_sandbox_path(raw_path)
+            args = {
+                "path": raw_path if norm is None else norm,
+                "content": content,
+            }
     else:
         return state
 

@@ -3,6 +3,8 @@ from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Float
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from .base import Base
+from sqlalchemy import Text
+
 
 class Run(Base):
     __tablename__ = "runs"
@@ -18,6 +20,9 @@ class ToolCall(Base):
     run_id = Column(UUID(as_uuid=True), ForeignKey("runs.id"))
     tool_name = Column(String, nullable=False)
     args_redacted = Column(JSON, nullable=False)
+    status = Column(String, nullable=False, default="EXECUTED")
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    approval_note = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Decision(Base):

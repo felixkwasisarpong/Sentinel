@@ -71,7 +71,7 @@ def propose_tool_call(tool: str, args: dict, agent_role: str) -> str:
     Public wrapper for deterministic tool execution (bypasses LLM hallucinations).
     """
     # Enforce sandbox boundary for filesystem tools
-    if tool in ("fs.list_dir", "fs.read_file"):
+    if tool in ("fs.list_dir", "fs.read_file", "fs.write_file"):
         norm = _normalize_sandbox_path(str(args.get("path", "")))
         if norm is None:
             return "[BLOCKED] path must be under /sandbox"
@@ -82,7 +82,7 @@ def propose_tool_call(tool: str, args: dict, agent_role: str) -> str:
 
 def propose_tool_decision(tool: str, args: dict, agent_role: str) -> dict:
     # Enforce sandbox boundary for filesystem tools
-    if tool in ("fs.list_dir", "fs.read_file"):
+    if tool in ("fs.list_dir", "fs.read_file", "fs.write_file"):
         norm = _normalize_sandbox_path(str(args.get("path", "")))
         if norm is None:
             return {
@@ -146,3 +146,24 @@ class FSReadFileTool(BaseTool):
         if norm is None:
             return "[BLOCKED] path must be under /sandbox"
         return _propose("fs.read_file", {"path": norm}, self._agent_role)
+
+
+class WriteFileInput(BaseModel):
+    path: str = Field(..., description="File path to write")
+    content: str = Field(..., description="Content to write")
+
+
+class FSWriteFileTool(BaseTool):
+    name: str = "fs_write_file"
+    description: str = "Write a file in the sandbox (governed by Senteniel policy)."
+    args_schema: Type[BaseModel] = WriteFileInput
+
+    def __init__(self, agent_role: str):
+        super().__init__()
+        self._agent_role = agent_role
+
+    def _run(self, path: str, content: str) -> str:
+        norm = _normalize_sandbox_path(path)
+        if norm is None:
+            return "[BLOCKED] path must be under /sandbox"
+        return _propose("fs.write_file", {"path": norm, "content": content}, self._agent_role)

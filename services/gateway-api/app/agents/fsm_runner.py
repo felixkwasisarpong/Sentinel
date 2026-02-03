@@ -30,6 +30,21 @@ def _extract_path(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _extract_write_content(text: str) -> str:
+    if not text:
+        return ""
+    m = re.search(r'write\s+(.+?)\s+to\s+(/[^\s"\']+)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    m = re.search(r'write\s+(.+?)\s+into\s+(/[^\s"\']+)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    m = re.search(r'write\s+(.+)$', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip().strip('"\'')
+    return ""
+
+
 def _normalize_sandbox_path(path: str | None) -> str | None:
     """
     Enforce that all filesystem paths are under /sandbox.
@@ -148,6 +163,42 @@ class HybridFSM:
             self.state = FSMState.PROPOSE_TOOL
             return
 
+        # WRITE
+        if "write" in task_l:
+            requested = _extract_path(self.ctx.user_task) or "/sandbox/hello.txt"
+            norm = _normalize_sandbox_path(requested)
+
+            self.ctx.requested_path = requested
+            self.ctx.normalized_path = norm
+            self.ctx.plan = f"Write file {requested}"
+            self.ctx.tool = "fs.write_file"
+
+            if _extract_path(self.ctx.user_task) is not None and norm is None:
+                self.ctx.decision = "BLOCK"
+                self.ctx.result = "[BLOCKED] path must be under /sandbox"
+                self.ctx.tool_decision = {
+                    "tool_call_id": "n/a",
+                    "decision": "BLOCK",
+                    "reason": "path must be under /sandbox",
+                    "result": None,
+                    "policy_citations": [],
+                    "incident_refs": [],
+                    "control_refs": [],
+                }
+                self.state = FSMState.BLOCKED
+                return
+
+            safe_path = norm or "/sandbox/hello.txt"
+            content = _extract_write_content(self.ctx.user_task)
+            self.ctx.args = {
+                "path": safe_path,
+                "content": content,
+                "__orchestrator": self.ctx.orchestrator,
+                "__agent_role": self.ctx.agent_role,
+            }
+            self.state = FSMState.PROPOSE_TOOL
+            return
+
         # NO TOOL
         self.ctx.plan = "No tool required"
         self.ctx.decision = "ALLOW"
@@ -163,7 +214,7 @@ class HybridFSM:
             return
 
         # Enforce sandbox boundary for filesystem tools
-        if self.ctx.tool in ("fs.list_dir", "fs.read_file"):
+        if self.ctx.tool in ("fs.list_dir", "fs.read_file", "fs.write_file"):
             raw = None
             if isinstance(self.ctx.args, dict):
                 raw = self.ctx.args.get("path")

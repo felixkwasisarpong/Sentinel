@@ -3,6 +3,7 @@ import time
 import json
 import requests
 from typing import Any
+from datetime import datetime, timezone
 
 from .policy import evaluate_policy
 from .mcp_client import call_tool
@@ -75,6 +76,7 @@ class ToolDecision:
     decision: str
     reason: str
     result: str | None
+    final_status: str | None
     # Phase 2A: citations (empty lists if not available)
     policy_citations: list[str]
     incident_refs: list[str]
@@ -127,6 +129,7 @@ class Mutation:
                     decision="BLOCK",
                     reason="Invalid JSON in args",
                     result=None,
+                    final_status=None,
                     policy_citations=policies,
                     incident_refs=incidents,
                     control_refs=controls,
@@ -154,14 +157,47 @@ class Mutation:
             db.flush()
             tool_call_id = str(tool_call.id)
 
-            allowed, reason, risk_score = evaluate_policy(tool, tool_args)
-            if not allowed:
+            decision_value, reason, risk_score = evaluate_policy(tool, tool_args)
+            if decision_value == "APPROVAL_REQUIRED":
+                tool_calls.labels(tool=tool, decision="APPROVAL_REQUIRED").inc()
+                decision_latency.observe((time.time() - start) * 1000)
+
+                tool_call.status = "PENDING"
+                db.add(tool_call)
+
+                decision = Decision(
+                    tool_call_id=tool_call.id,
+                    decision="APPROVAL_REQUIRED",
+                    reason=reason,
+                    risk_score=risk_score,
+                )
+                if hasattr(decision, "policy_citations"):
+                    decision.policy_citations = policies
+                if hasattr(decision, "incident_refs"):
+                    decision.incident_refs = incidents
+                if hasattr(decision, "control_refs"):
+                    decision.control_refs = controls
+
+                db.add(decision)
+                db.commit()
+                return ToolDecision(
+                    tool_call_id=tool_call_id,
+                    decision="APPROVAL_REQUIRED",
+                    reason=reason,
+                    result=None,
+                    final_status="PENDING",
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
+                )
+
+            if decision_value != "ALLOW":
                 tool_calls.labels(tool=tool, decision="BLOCK").inc()
                 decision_latency.observe((time.time() - start) * 1000)
 
                 decision = Decision(
                     tool_call_id=tool_call.id,
-                    decision="BLOCK",
+                    decision=decision_value,
                     reason=reason,
                     risk_score=risk_score,
                 )
@@ -177,9 +213,10 @@ class Mutation:
                 db.commit()
                 return ToolDecision(
                     tool_call_id=tool_call_id,
-                    decision="BLOCK",
+                    decision=decision_value,
                     reason=reason,
                     result=None,
+                    final_status=None,
                     policy_citations=policies,
                     incident_refs=incidents,
                     control_refs=controls,
@@ -223,6 +260,7 @@ class Mutation:
                     decision="BLOCK",
                     reason=reason_text,
                     result=None,
+                    final_status=None,
                     policy_citations=policies,
                     incident_refs=incidents,
                     control_refs=controls,
@@ -258,6 +296,7 @@ class Mutation:
                 decision="ALLOW",
                 reason=reason,
                 result=result_text,
+                final_status=None,
                 policy_citations=policies,
                 incident_refs=incidents,
                 control_refs=controls,
@@ -269,9 +308,187 @@ class Mutation:
             except Exception:
                 pass
 
+    @strawberry.mutation
+    def approve_tool_call(self, tool_call_id: str, note: str | None = None) -> ToolDecision:
+        db = SessionLocal()
+        try:
+            tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id).first()
+            if not tool_call:
+                return ToolDecision(
+                    tool_call_id="n/a",
+                    decision="BLOCK",
+                    reason="Tool call not found",
+                    result=None,
+                    final_status=None,
+                    policy_citations=[],
+                    incident_refs=[],
+                    control_refs=[],
+                )
+
+            if tool_call.status != "PENDING":
+                return ToolDecision(
+                    tool_call_id=str(tool_call.id),
+                    decision="BLOCK",
+                    reason=f"Tool call is not pending (status={tool_call.status})",
+                    result=None,
+                    final_status=None,
+                    policy_citations=[],
+                    incident_refs=[],
+                    control_refs=[],
+                )
+
+            # Mark approved
+            tool_call.status = "APPROVED"
+            tool_call.approved_at = datetime.now(timezone.utc)
+            tool_call.approval_note = note
+            db.add(tool_call)
+            db.flush()
+
+            # Execute tool with stored args (redacted)
+            try:
+                result = call_tool(tool_call.tool_name, tool_call.args_redacted or {})
+                result_value = result.get("result") if isinstance(result, dict) and "result" in result else result
+                if isinstance(result_value, (dict, list)):
+                    result_text = json.dumps(result_value)
+                else:
+                    result_text = str(result_value)
+                decision_value = "ALLOW"
+                reason_text = "Approved"
+            except requests.RequestException as exc:
+                detail = None
+                if getattr(exc, "response", None) is not None:
+                    try:
+                        detail = exc.response.json().get("detail")
+                    except Exception:
+                        detail = exc.response.text
+                reason_text = detail or str(exc)
+                if not detail:
+                    reason_text = f"Tool call failed: {reason_text}"
+                result_text = None
+                decision_value = "BLOCK"
+
+            # Persist decision
+            prior = get_decision_for_tool_call(db, tool_call.id)
+            risk_score = getattr(prior, "risk_score", 0.0) if prior else 0.0
+            decision = Decision(
+                tool_call_id=tool_call.id,
+                decision=decision_value,
+                reason=reason_text,
+                risk_score=risk_score,
+            )
+            db.add(decision)
+
+            # Mark executed
+            tool_call.status = "EXECUTED"
+            db.add(tool_call)
+            db.commit()
+
+            try:
+                if lookup_policy_ids is None:
+                    policies, incidents, controls = [], [], []
+                else:
+                    policies, incidents, controls = lookup_policy_ids(tool_call.tool_name)
+            except Exception:
+                policies, incidents, controls = [], [], []
+
+            return ToolDecision(
+                tool_call_id=str(tool_call.id),
+                decision=decision_value,
+                reason=reason_text,
+                result=result_text,
+                final_status=tool_call.status,
+                policy_citations=policies,
+                incident_refs=incidents,
+                control_refs=controls,
+            )
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    @strawberry.mutation
+    def deny_tool_call(self, tool_call_id: str, note: str | None = None) -> ToolDecision:
+        db = SessionLocal()
+        try:
+            tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id).first()
+            if not tool_call:
+                return ToolDecision(
+                    tool_call_id="n/a",
+                    decision="BLOCK",
+                    reason="Tool call not found",
+                    result=None,
+                    final_status=None,
+                    policy_citations=[],
+                    incident_refs=[],
+                    control_refs=[],
+                )
+
+            if tool_call.status != "PENDING":
+                return ToolDecision(
+                    tool_call_id=str(tool_call.id),
+                    decision="BLOCK",
+                    reason=f"Tool call is not pending (status={tool_call.status})",
+                    result=None,
+                    final_status=None,
+                    policy_citations=[],
+                    incident_refs=[],
+                    control_refs=[],
+                )
+
+            tool_call.status = "DENIED"
+            tool_call.approved_at = datetime.now(timezone.utc)
+            tool_call.approval_note = note
+            db.add(tool_call)
+            db.flush()
+
+            prior = get_decision_for_tool_call(db, tool_call.id)
+            db.commit()
+
+            try:
+                if lookup_policy_ids is None:
+                    policies, incidents, controls = [], [], []
+                else:
+                    policies, incidents, controls = lookup_policy_ids(tool_call.tool_name)
+            except Exception:
+                policies, incidents, controls = [], [], []
+
+            decision_value = getattr(prior, "decision", None) or "APPROVAL_REQUIRED"
+            reason_value = note or getattr(prior, "reason", None) or "Denied"
+
+            return ToolDecision(
+                tool_call_id=str(tool_call.id),
+                decision=decision_value,
+                reason=reason_value,
+                result=None,
+                final_status="DENIED",
+                policy_citations=policies,
+                incident_refs=incidents,
+                control_refs=controls,
+            )
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
 
 @strawberry.type
 class Query:
+    def _resolve_citations(self, decision: Decision | None, tool_name: str) -> tuple[list[str], list[str], list[str]]:
+        if decision is not None and hasattr(decision, "policy_citations"):
+            policies = getattr(decision, "policy_citations", []) or []
+            incidents = getattr(decision, "incident_refs", []) or []
+            controls = getattr(decision, "control_refs", []) or []
+            return policies, incidents, controls
+
+        if lookup_policy_ids is None:
+            return [], [], []
+
+        try:
+            return lookup_policy_ids(tool_name)
+        except Exception:
+            return [], [], []
 
     @strawberry.field
     def ping(self) -> str:
@@ -307,15 +524,20 @@ class Query:
         tool_calls = []
         for tc in get_tool_calls_for_run(db, run.id):
             decision = get_decision_for_tool_call(db, tc.id)
+            policies, incidents, controls = self._resolve_citations(decision, tc.tool_name)
             tool_calls.append(
                 ToolCallType(
                     id=str(tc.id),
                     tool_name=tc.tool_name,
                     args_redacted=tc.args_redacted,
+                    created_at=tc.created_at,
                     decision=DecisionType(
                         decision=decision.decision,
                         reason=decision.reason,
                         created_at=decision.created_at,
+                        policy_citations=policies,
+                        incident_refs=incidents,
+                        control_refs=controls,
                     ) if decision else None
                 )
             )
@@ -337,11 +559,53 @@ class Query:
             DecisionType(
                 decision=d.decision,
                 reason=d.reason,
-                created_at=d.created_at
+                created_at=d.created_at,
+                policy_citations=[],
+                incident_refs=[],
+                control_refs=[],
             )
             for d in decisions
         ]
         db.close()
         return result
+
+    @strawberry.field(name="pendingApprovals")
+    def pending_approvals(self, limit: int = 20) -> list[ToolCallType]:
+        db = SessionLocal()
+        tool_calls = (
+            db.query(DbToolCall)
+            .order_by(DbToolCall.created_at.desc())
+            .all()
+        )
+
+        results: list[ToolCallType] = []
+        for tc in tool_calls:
+            decision = get_decision_for_tool_call(db, tc.id)
+            if not decision or decision.decision != "APPROVAL_REQUIRED":
+                continue
+
+            policies, incidents, controls = self._resolve_citations(decision, tc.tool_name)
+
+            results.append(
+                ToolCallType(
+                    id=str(tc.id),
+                    tool_name=tc.tool_name,
+                    args_redacted=tc.args_redacted,
+                    created_at=tc.created_at,
+                    decision=DecisionType(
+                        decision=decision.decision,
+                        reason=decision.reason,
+                        created_at=decision.created_at,
+                        policy_citations=policies,
+                        incident_refs=incidents,
+                        control_refs=controls,
+                    ),
+                )
+            )
+            if len(results) >= limit:
+                break
+
+        db.close()
+        return results
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)
