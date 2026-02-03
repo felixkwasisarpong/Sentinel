@@ -76,6 +76,7 @@ class ToolDecision:
     decision: str
     reason: str
     result: str | None
+    final_status: str | None
     # Phase 2A: citations (empty lists if not available)
     policy_citations: list[str]
     incident_refs: list[str]
@@ -128,6 +129,7 @@ class Mutation:
                     decision="BLOCK",
                     reason="Invalid JSON in args",
                     result=None,
+                    final_status=None,
                     policy_citations=policies,
                     incident_refs=incidents,
                     control_refs=controls,
@@ -181,6 +183,7 @@ class Mutation:
                     decision="BLOCK",
                     reason=reason,
                     result=None,
+                    final_status=None,
                     policy_citations=policies,
                     incident_refs=incidents,
                     control_refs=controls,
@@ -224,6 +227,7 @@ class Mutation:
                     decision="BLOCK",
                     reason=reason_text,
                     result=None,
+                    final_status=None,
                     policy_citations=policies,
                     incident_refs=incidents,
                     control_refs=controls,
@@ -259,6 +263,7 @@ class Mutation:
                 decision="ALLOW",
                 reason=reason,
                 result=result_text,
+                final_status=None,
                 policy_citations=policies,
                 incident_refs=incidents,
                 control_refs=controls,
@@ -281,6 +286,7 @@ class Mutation:
                     decision="BLOCK",
                     reason="Tool call not found",
                     result=None,
+                    final_status=None,
                     policy_citations=[],
                     incident_refs=[],
                     control_refs=[],
@@ -292,6 +298,7 @@ class Mutation:
                     decision="BLOCK",
                     reason=f"Tool call is not pending (status={tool_call.status})",
                     result=None,
+                    final_status=None,
                     policy_citations=[],
                     incident_refs=[],
                     control_refs=[],
@@ -356,6 +363,7 @@ class Mutation:
                 decision=decision_value,
                 reason=reason_text,
                 result=result_text,
+                final_status=tool_call.status,
                 policy_citations=policies,
                 incident_refs=incidents,
                 control_refs=controls,
@@ -377,6 +385,7 @@ class Mutation:
                     decision="BLOCK",
                     reason="Tool call not found",
                     result=None,
+                    final_status=None,
                     policy_citations=[],
                     incident_refs=[],
                     control_refs=[],
@@ -388,6 +397,7 @@ class Mutation:
                     decision="BLOCK",
                     reason=f"Tool call is not pending (status={tool_call.status})",
                     result=None,
+                    final_status=None,
                     policy_citations=[],
                     incident_refs=[],
                     control_refs=[],
@@ -400,14 +410,6 @@ class Mutation:
             db.flush()
 
             prior = get_decision_for_tool_call(db, tool_call.id)
-            risk_score = getattr(prior, "risk_score", 0.0) if prior else 0.0
-            decision = Decision(
-                tool_call_id=tool_call.id,
-                decision="BLOCK",
-                reason=note or "Denied",
-                risk_score=risk_score,
-            )
-            db.add(decision)
             db.commit()
 
             try:
@@ -418,11 +420,15 @@ class Mutation:
             except Exception:
                 policies, incidents, controls = [], [], []
 
+            decision_value = getattr(prior, "decision", None) or "APPROVAL_REQUIRED"
+            reason_value = note or getattr(prior, "reason", None) or "Denied"
+
             return ToolDecision(
                 tool_call_id=str(tool_call.id),
-                decision="BLOCK",
-                reason=note or "Denied",
+                decision=decision_value,
+                reason=reason_value,
                 result=None,
+                final_status="DENIED",
                 policy_citations=policies,
                 incident_refs=incidents,
                 control_refs=controls,
