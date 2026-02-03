@@ -27,3 +27,17 @@ def read_file(path: str):
         raise ValueError("File does not exist")
 
     return path.read_text()
+
+
+class WriteFileArgs(BaseModel):
+    path: str
+    content: str
+
+
+def write_file(path: str, content: str):
+    args = WriteFileArgs(path=path, content=content)
+    path = validate_path(args.path)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(args.content)
+    return f"OK wrote {len(args.content.encode('utf-8'))} bytes"

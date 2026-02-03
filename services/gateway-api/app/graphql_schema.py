@@ -157,14 +157,47 @@ class Mutation:
             db.flush()
             tool_call_id = str(tool_call.id)
 
-            allowed, reason, risk_score = evaluate_policy(tool, tool_args)
-            if not allowed:
+            decision_value, reason, risk_score = evaluate_policy(tool, tool_args)
+            if decision_value == "APPROVAL_REQUIRED":
+                tool_calls.labels(tool=tool, decision="APPROVAL_REQUIRED").inc()
+                decision_latency.observe((time.time() - start) * 1000)
+
+                tool_call.status = "PENDING"
+                db.add(tool_call)
+
+                decision = Decision(
+                    tool_call_id=tool_call.id,
+                    decision="APPROVAL_REQUIRED",
+                    reason=reason,
+                    risk_score=risk_score,
+                )
+                if hasattr(decision, "policy_citations"):
+                    decision.policy_citations = policies
+                if hasattr(decision, "incident_refs"):
+                    decision.incident_refs = incidents
+                if hasattr(decision, "control_refs"):
+                    decision.control_refs = controls
+
+                db.add(decision)
+                db.commit()
+                return ToolDecision(
+                    tool_call_id=tool_call_id,
+                    decision="APPROVAL_REQUIRED",
+                    reason=reason,
+                    result=None,
+                    final_status="PENDING",
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
+                )
+
+            if decision_value != "ALLOW":
                 tool_calls.labels(tool=tool, decision="BLOCK").inc()
                 decision_latency.observe((time.time() - start) * 1000)
 
                 decision = Decision(
                     tool_call_id=tool_call.id,
-                    decision="BLOCK",
+                    decision=decision_value,
                     reason=reason,
                     risk_score=risk_score,
                 )
@@ -180,7 +213,7 @@ class Mutation:
                 db.commit()
                 return ToolDecision(
                     tool_call_id=tool_call_id,
-                    decision="BLOCK",
+                    decision=decision_value,
                     reason=reason,
                     result=None,
                     final_status=None,

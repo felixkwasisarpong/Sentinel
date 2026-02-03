@@ -1,5 +1,5 @@
 from .mcp.server.fastapi import MCPServer
-from .tools_fs import list_dir, read_file
+from .tools_fs import list_dir, read_file, write_file
 
 server = MCPServer(
     name="senteniel-mcp-sandbox",
@@ -16,6 +16,12 @@ server.add_tool(
     name="fs.read_file",
     description="Read a file (sandboxed, secrets blocked)",
     handler=read_file,
+)
+
+server.add_tool(
+    name="fs.write_file",
+    description="Write a file (sandboxed)",
+    handler=write_file,
 )
 
 app = server.app
