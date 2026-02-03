@@ -102,6 +102,37 @@ This makes tool‑use safety **concrete and enforceable**, not theoretical.
 
 ---
 
+### 🛑 Human‑in‑the‑Loop Approvals (Write Actions)
+
+Some tool actions are safe to execute automatically (e.g., listing files in `/sandbox`). Others are **risky by nature** (writes, destructive changes, privilege escalation) and should require a reviewer.
+
+Senteniel supports a third decision state:
+- `APPROVAL_REQUIRED` — the tool call is **captured + persisted**, but **not executed** until a human approves it.
+
+**MVP implemented today:** `fs.write_file` is governed as approval‑required.
+
+**Example output (approval required):**
+
+```json
+{
+  "tool_decision": {
+    "tool_call_id": "<uuid>",
+    "decision": "APPROVAL_REQUIRED",
+    "reason": "Write requires human approval",
+    "result": null,
+    "policy_citations": ["P-FS-WRITE-APPROVAL-001"],
+    "incident_refs": [],
+    "control_refs": ["C-HUMAN-IN-LOOP-001"]
+  }
+}
+```
+
+**Audit status transitions:**
+- `PENDING` → `APPROVED` → `EXECUTED` (after reviewer approval)
+- `PENDING` → `DENIED` (never executed)
+
+> Note: the approval queue + approve/deny mutations are the next UI/API layer on top of this persisted state.
+
 ### 🧠 Orchestrator Leaderboard (3‑way)
 Senteniel runs the **same governed tool calls** through three orchestration strategies:
 
@@ -324,8 +355,9 @@ python eval/score.py
    - policy constraints
 4. GraphRAG retrieves relevant policies and prior incidents  
 5. A decision is made and persisted  
-6. Approved calls are forwarded to the MCP server  
-7. Tool outputs are redacted and returned  
+6. If the decision is APPROVAL_REQUIRED, the tool call is stored as PENDING and waits for human approval (no tool execution yet).
+7. Approved calls are forwarded to the MCP server  
+8. Tool outputs are redacted and returned  
 
 ---
 
@@ -337,6 +369,7 @@ python eval/score.py
 
 All schema changes are managed via Alembic migrations.
 GraphQL read queries are available to fetch **runs**, **tool_calls**, and **decisions** for UI dashboards and leaderboards.
+Tool calls also track approval workflow state (PENDING/APPROVED/DENIED/EXECUTED) to support human‑in‑the‑loop governance for risky tools.
 
 ---
 
@@ -431,8 +464,9 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 - ✅ Fairness rule enforced: same tools, same policies, same MCP boundary; only orchestrator differs
 
 ### 🚧 Phase 2 — GraphRAG Proof Mode
-- Neo4j citations are working for both ALLOW and BLOCK
-- Next step: approval-required flow for write actions
+- ✅ Neo4j citations are working for both ALLOW and BLOCK
+- ✅ Approval‑required policy for write actions (APPROVAL_REQUIRED) — MVP implemented for fs.write_file
+- Next: approval queue + approve/deny workflow in GraphQL/UI
 
 ### 🚧 Phase 3 — Evaluation Harness (next)
 - Task suite (`eval/tasks.jsonl`) covering utility + safety cases
