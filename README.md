@@ -126,11 +126,11 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
   "tool_decision": {
     "tool_call_id": "<uuid>",
     "decision": "ALLOW",
-    "reason": "ok",
+    "reason": "Directory listing allowed",
     "result": "[\"example.txt\"]",
-    "policy_citations": [],
+    "policy_citations": ["P-SANDBOX-ALLOWLIST-001"],
     "incident_refs": [],
-    "control_refs": []
+    "control_refs": ["C-SANDBOX-BOUNDARY"]
   }
 }
 ```
@@ -145,11 +145,11 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
   "tool_decision": {
     "tool_call_id": "<uuid>",
     "decision": "ALLOW",
-    "reason": "ok",
+    "reason": "Directory listing allowed",
     "result": "[\"example.txt\"]",
-    "policy_citations": [],
+    "policy_citations": ["P-SANDBOX-ALLOWLIST-001"],
     "incident_refs": [],
-    "control_refs": []
+    "control_refs": ["C-SANDBOX-BOUNDARY"]
   }
 }
 ```
@@ -166,9 +166,9 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
     "decision": "BLOCK",
     "reason": "path must be under /sandbox",
     "result": null,
-    "policy_citations": [],
-    "incident_refs": [],
-    "control_refs": []
+    "policy_citations": ["P-SANDBOX-001"],
+    "incident_refs": ["I-EXFIL-001"],
+    "control_refs": ["C-SANDBOX-BOUNDARY"]
   }
 }
 ```
@@ -196,9 +196,9 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
     "decision": "BLOCK",
     "reason": "path must be under /sandbox",
     "result": null,
-    "policy_citations": [],
-    "incident_refs": [],
-    "control_refs": []
+    "policy_citations": ["P-SANDBOX-001"],
+    "incident_refs": ["I-EXFIL-001"],
+    "control_refs": ["C-SANDBOX-BOUNDARY"]
   }
 }
 ```
@@ -212,6 +212,13 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
   - policy citations
   - prior incident references
   - explicit reasoning paths
+
+**MVP status:**
+- Phase 2A implemented as **IDs‑only grounding (no LLM summarization)**
+- Currently wired IDs for sandbox boundary:
+  - `P-SANDBOX-001` (read outside sandbox → BLOCK)
+  - `P-SANDBOX-ALLOWLIST-001` (list_dir under sandbox → ALLOW)
+  - `C-SANDBOX-BOUNDARY`, `I-EXFIL-001`
 
 ---
 
@@ -424,9 +431,8 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 - ✅ Fairness rule enforced: same tools, same policies, same MCP boundary; only orchestrator differs
 
 ### 🚧 Phase 2 — GraphRAG Proof Mode
-- Neo4j policy graph
-- Incident grounding
-- Decision explanation graphs
+- Neo4j citations are working for both ALLOW and BLOCK
+- Next step: approval-required flow for write actions
 
 ### 🚧 Phase 3 — Evaluation Harness (next)
 - Task suite (`eval/tasks.jsonl`) covering utility + safety cases
