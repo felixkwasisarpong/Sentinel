@@ -21,9 +21,9 @@ from .graphql_types import RunType, ToolCallType, DecisionType
 
 # Phase 2A (optional): Neo4j policy graph citations
 try:
-    from .policy_graph import fetch_policy_context
+    from .policy_graph import lookup_policy_ids
 except Exception:
-    fetch_policy_context = None
+    lookup_policy_ids = None
 
 
 try:
@@ -90,7 +90,13 @@ class Mutation:
         start = time.time()
 
         tool_call_id = "n/a"
-        citations = {"policy_citations": [], "incident_refs": [], "control_refs": []}
+        try:
+            if lookup_policy_ids is None:
+                policies, incidents, controls = [], [], []
+            else:
+                policies, incidents, controls = lookup_policy_ids(tool)
+        except Exception:
+            policies, incidents, controls = [], [], []
 
         try:
             # Accept JSON as a string from GraphQL and parse it into a dict
@@ -121,9 +127,9 @@ class Mutation:
                     decision="BLOCK",
                     reason="Invalid JSON in args",
                     result=None,
-                    policy_citations=[],
-                    incident_refs=[],
-                    control_refs=[],
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
                 )
 
             meta_args = {k: v for k, v in parsed_args.items() if str(k).startswith("__")}
@@ -148,13 +154,6 @@ class Mutation:
             db.flush()
             tool_call_id = str(tool_call.id)
 
-            # Phase 2A: fetch policy context (citations) if module is available
-            if fetch_policy_context is not None:
-                try:
-                    citations = fetch_policy_context(tool, tool_args) or citations
-                except Exception:
-                    citations = {"policy_citations": [], "incident_refs": [], "control_refs": []}
-
             allowed, reason, risk_score = evaluate_policy(tool, tool_args)
             if not allowed:
                 tool_calls.labels(tool=tool, decision="BLOCK").inc()
@@ -168,11 +167,11 @@ class Mutation:
                 )
                 # Persist citations if Decision model supports these columns
                 if hasattr(decision, "policy_citations"):
-                    decision.policy_citations = citations.get("policy_citations", [])
+                    decision.policy_citations = policies
                 if hasattr(decision, "incident_refs"):
-                    decision.incident_refs = citations.get("incident_refs", [])
+                    decision.incident_refs = incidents
                 if hasattr(decision, "control_refs"):
-                    decision.control_refs = citations.get("control_refs", [])
+                    decision.control_refs = controls
 
                 db.add(decision)
                 db.commit()
@@ -181,9 +180,9 @@ class Mutation:
                     decision="BLOCK",
                     reason=reason,
                     result=None,
-                    policy_citations=citations.get("policy_citations", []) or [],
-                    incident_refs=citations.get("incident_refs", []) or [],
-                    control_refs=citations.get("control_refs", []) or [],
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
                 )
 
             # Allowed: execute tool via MCP
@@ -211,11 +210,11 @@ class Mutation:
                     risk_score=risk_score,
                 )
                 if hasattr(decision, "policy_citations"):
-                    decision.policy_citations = citations.get("policy_citations", [])
+                    decision.policy_citations = policies
                 if hasattr(decision, "incident_refs"):
-                    decision.incident_refs = citations.get("incident_refs", [])
+                    decision.incident_refs = incidents
                 if hasattr(decision, "control_refs"):
-                    decision.control_refs = citations.get("control_refs", [])
+                    decision.control_refs = controls
 
                 db.add(decision)
                 db.commit()
@@ -224,9 +223,9 @@ class Mutation:
                     decision="BLOCK",
                     reason=reason_text,
                     result=None,
-                    policy_citations=citations.get("policy_citations", []) or [],
-                    incident_refs=citations.get("incident_refs", []) or [],
-                    control_refs=citations.get("control_refs", []) or [],
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
                 )
 
             result_value = result.get("result") if isinstance(result, dict) and "result" in result else result
@@ -245,11 +244,11 @@ class Mutation:
                 risk_score=risk_score,
             )
             if hasattr(decision, "policy_citations"):
-                decision.policy_citations = citations.get("policy_citations", [])
+                decision.policy_citations = policies
             if hasattr(decision, "incident_refs"):
-                decision.incident_refs = citations.get("incident_refs", [])
+                decision.incident_refs = incidents
             if hasattr(decision, "control_refs"):
-                decision.control_refs = citations.get("control_refs", [])
+                decision.control_refs = controls
 
             db.add(decision)
             db.commit()
@@ -259,9 +258,9 @@ class Mutation:
                 decision="ALLOW",
                 reason=reason,
                 result=result_text,
-                policy_citations=citations.get("policy_citations", []) or [],
-                incident_refs=citations.get("incident_refs", []) or [],
-                control_refs=citations.get("control_refs", []) or [],
+                policy_citations=policies,
+                incident_refs=incidents,
+                control_refs=controls,
             )
 
         finally:
