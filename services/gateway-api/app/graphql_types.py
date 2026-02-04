@@ -12,13 +12,19 @@ class DecisionType:
     incident_refs: List[str]
     control_refs: List[str]
 
+
 @strawberry.type
 class ToolCallType:
     id: str
     tool_name: str
     args_redacted: JSON
-    created_at: datetime
     decision: Optional[DecisionType]
+    status: Optional[str]
+    approved_at: Optional[datetime]
+    approval_note: Optional[str]
+    created_at: datetime
+
+
 
 @strawberry.type
 class RunType:
@@ -26,3 +32,11 @@ class RunType:
     orchestrator: str
     created_at: datetime
     tool_calls: List[ToolCallType]
+
+
+@strawberry.type
+class Query:
+    @strawberry.field
+    def ping(self) -> str:
+        return "pong"
+    

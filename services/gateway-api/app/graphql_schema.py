@@ -473,27 +473,28 @@ class Mutation:
                 pass
 
 
+def _resolve_citations(decision: Decision | None, tool_name: str) -> tuple[list[str], list[str], list[str]]:
+    if decision is not None and hasattr(decision, "policy_citations"):
+        policies = getattr(decision, "policy_citations", []) or []
+        incidents = getattr(decision, "incident_refs", []) or []
+        controls = getattr(decision, "control_refs", []) or []
+        return policies, incidents, controls
+
+    if lookup_policy_ids is None:
+        return [], [], []
+
+    try:
+        return lookup_policy_ids(tool_name)
+    except Exception:
+        return [], [], []
+
+
 @strawberry.type
 class Query:
-    def _resolve_citations(self, decision: Decision | None, tool_name: str) -> tuple[list[str], list[str], list[str]]:
-        if decision is not None and hasattr(decision, "policy_citations"):
-            policies = getattr(decision, "policy_citations", []) or []
-            incidents = getattr(decision, "incident_refs", []) or []
-            controls = getattr(decision, "control_refs", []) or []
-            return policies, incidents, controls
-
-        if lookup_policy_ids is None:
-            return [], [], []
-
-        try:
-            return lookup_policy_ids(tool_name)
-        except Exception:
-            return [], [], []
-
     @strawberry.field
     def ping(self) -> str:
         return "pong"
-    
+
     @strawberry.field
     def runs(self, limit: int = 20) -> list[RunType]:
         db = SessionLocal()
@@ -506,7 +507,7 @@ class Query:
                     id=str(r.id),
                     orchestrator=r.orchestrator,
                     created_at=r.created_at,
-                    tool_calls=[]
+                    tool_calls=[],
                 )
             )
 
@@ -524,13 +525,16 @@ class Query:
         tool_calls = []
         for tc in get_tool_calls_for_run(db, run.id):
             decision = get_decision_for_tool_call(db, tc.id)
-            policies, incidents, controls = self._resolve_citations(decision, tc.tool_name)
+            policies, incidents, controls = _resolve_citations(decision, tc.tool_name)
             tool_calls.append(
                 ToolCallType(
                     id=str(tc.id),
                     tool_name=tc.tool_name,
                     args_redacted=tc.args_redacted,
                     created_at=tc.created_at,
+                    status=tc.status,
+                    approved_at=tc.approved_at,
+                    approval_note=tc.approval_note,
                     decision=DecisionType(
                         decision=decision.decision,
                         reason=decision.reason,
@@ -538,7 +542,7 @@ class Query:
                         policy_citations=policies,
                         incident_refs=incidents,
                         control_refs=controls,
-                    ) if decision else None
+                    ) if decision else None,
                 )
             )
 
@@ -574,7 +578,9 @@ class Query:
         db = SessionLocal()
         tool_calls = (
             db.query(DbToolCall)
+            .filter(DbToolCall.status == "PENDING")
             .order_by(DbToolCall.created_at.desc())
+            .limit(limit * 3)
             .all()
         )
 
@@ -584,13 +590,16 @@ class Query:
             if not decision or decision.decision != "APPROVAL_REQUIRED":
                 continue
 
-            policies, incidents, controls = self._resolve_citations(decision, tc.tool_name)
+            policies, incidents, controls = _resolve_citations(decision, tc.tool_name)
 
             results.append(
                 ToolCallType(
                     id=str(tc.id),
                     tool_name=tc.tool_name,
                     args_redacted=tc.args_redacted,
+                    status=tc.status,
+                    approved_at=tc.approved_at,
+                    approval_note=tc.approval_note,
                     created_at=tc.created_at,
                     decision=DecisionType(
                         decision=decision.decision,
