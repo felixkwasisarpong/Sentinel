@@ -9,7 +9,7 @@ from .policy import evaluate_policy
 from .mcp_client import call_tool
 from .metrics import tool_calls, decision_latency
 from .db.session import SessionLocal
-from .db.models import Run, ToolCall as DbToolCall, Decision
+from .db.models import Run, ToolCall as DbToolCall, Decision, MCPServer
 from .redaction import redact_args
 from .db.queries import (
     get_runs,
@@ -17,8 +17,10 @@ from .db.queries import (
     get_tool_calls_for_run,
     get_decision_for_tool_call,
     get_recent_decisions,
+    get_mcp_servers,
+    get_mcp_server_for_tool,
 )
-from .graphql_types import RunType, ToolCallType, DecisionType
+from .graphql_types import RunType, ToolCallType, DecisionType, MCPServerType
 
 # Phase 2A (optional): Neo4j policy graph citations
 try:
@@ -472,6 +474,62 @@ class Mutation:
             except Exception:
                 pass
 
+    @strawberry.mutation
+    def register_mcp_server(
+        self,
+        name: str,
+        base_url: str,
+        tool_prefix: str,
+        auth_header: str | None = None,
+        auth_token: str | None = None,
+    ) -> MCPServerType:
+        db = SessionLocal()
+        try:
+            existing = (
+                db.query(MCPServer)
+                .filter((MCPServer.name == name) | (MCPServer.tool_prefix == tool_prefix))
+                .first()
+            )
+
+            if existing:
+                existing.name = name
+                existing.base_url = base_url
+                existing.tool_prefix = tool_prefix
+                existing.auth_header = auth_header
+                existing.auth_token = auth_token
+                db.add(existing)
+                db.commit()
+                return MCPServerType(
+                    id=str(existing.id),
+                    name=existing.name,
+                    base_url=existing.base_url,
+                    tool_prefix=existing.tool_prefix,
+                    created_at=existing.created_at,
+                )
+
+            server = MCPServer(
+                name=name,
+                base_url=base_url,
+                tool_prefix=tool_prefix,
+                auth_header=auth_header,
+                auth_token=auth_token,
+            )
+            db.add(server)
+            db.commit()
+            db.refresh(server)
+            return MCPServerType(
+                id=str(server.id),
+                name=server.name,
+                base_url=server.base_url,
+                tool_prefix=server.tool_prefix,
+                created_at=server.created_at,
+            )
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
 
 def _resolve_citations(decision: Decision | None, tool_name: str) -> tuple[list[str], list[str], list[str]]:
     if decision is not None and hasattr(decision, "policy_citations"):
@@ -616,5 +674,22 @@ class Query:
 
         db.close()
         return results
+
+    @strawberry.field(name="mcpServers")
+    def mcp_servers(self) -> list[MCPServerType]:
+        db = SessionLocal()
+        servers = get_mcp_servers(db)
+        result = [
+            MCPServerType(
+                id=str(s.id),
+                name=s.name,
+                base_url=s.base_url,
+                tool_prefix=s.tool_prefix,
+                created_at=s.created_at,
+            )
+            for s in servers
+        ]
+        db.close()
+        return result
 
 schema = strawberry.Schema(query=Query, mutation=Mutation)

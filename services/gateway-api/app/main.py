@@ -1,4 +1,7 @@
+import os
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from strawberry.fastapi import GraphQLRouter
 from prometheus_client import make_asgi_app
 from .graphql_schema import schema
@@ -18,6 +21,20 @@ langgraph = build_langgraph()
 
 
 app = FastAPI(title="Senteniel Gateway")
+
+# Allow browser-based UI calls to GraphQL/REST.
+allowed_origins = [
+    o.strip()
+    for o in (os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","))
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 Base.metadata.create_all(bind=engine)
 

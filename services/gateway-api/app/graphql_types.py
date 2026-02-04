@@ -35,6 +35,15 @@ class RunType:
 
 
 @strawberry.type
+class MCPServerType:
+    id: str
+    name: str
+    base_url: str
+    tool_prefix: str
+    created_at: datetime
+
+
+@strawberry.type
 class Query:
     @strawberry.field
     def ping(self) -> str:

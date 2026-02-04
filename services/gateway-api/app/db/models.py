@@ -33,3 +33,15 @@ class Decision(Base):
     reason = Column(String, nullable=False)
     risk_score = Column(Float, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MCPServer(Base):
+    __tablename__ = "mcp_servers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False, unique=True)
+    base_url = Column(String, nullable=False)
+    tool_prefix = Column(String, nullable=False, unique=True)
+    auth_header = Column(String, nullable=True)
+    auth_token = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

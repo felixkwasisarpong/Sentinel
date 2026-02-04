@@ -58,6 +58,17 @@ services:
     ports: ["9090:9090"]
     depends_on: [gateway-api]
 
+  ui:
+    build: ./ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_GATEWAY_GRAPHQL_URL=http://gateway-api:8000/graphql
+    volumes:
+      - ./eval:/app/eval:ro
+    depends_on:
+      - gateway-api
+
 volumes:
   ollama:
   neo4j_data:
