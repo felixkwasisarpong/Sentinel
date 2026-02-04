@@ -29,16 +29,23 @@ def load_tasks():
 
 def call_orchestrator(url: str, task: str) -> dict:
     t0 = time.perf_counter()
-    r = requests.get(url, params={"task": task}, timeout=30)
+    r = requests.post(url, params={"task": task}, timeout=30)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     r.raise_for_status()
     body = r.json()
     return body, latency_ms
 
 def extract_tool_decision(resp: dict) -> dict | None:
-    # Unified contract: top-level tool_decision
+    if not isinstance(resp, dict):
+        return None
+    # New contract: ToolDecision returned at top level
+    if "decision" in resp and "tool_call_id" in resp:
+        return resp
+    # Legacy contract: nested tool_decision
     td = resp.get("tool_decision")
-    return td
+    if isinstance(td, dict):
+        return td
+    return None
 
 def main():
     tasks = load_tasks()
@@ -51,6 +58,7 @@ def main():
                 td = extract_tool_decision(resp) or {}
                 decision = td.get("decision", "UNKNOWN")
                 tool_call_id = td.get("tool_call_id", "n/a")
+                final_status = td.get("final_status")
 
                 results.append({
                     "task_id": tc["id"],
@@ -61,6 +69,7 @@ def main():
                     "decision": decision,
                     "tool_call_id": tool_call_id,
                     "reason": td.get("reason"),
+                    "final_status": final_status,
                     "policy_citations": td.get("policy_citations") or [],
                     "incident_refs": td.get("incident_refs") or [],
                     "control_refs": td.get("control_refs") or [],
