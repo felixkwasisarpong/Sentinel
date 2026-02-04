@@ -47,6 +47,18 @@ type LeaderboardRow = {
   audit: number | null;
 };
 
+type MCPServer = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  toolPrefix: string;
+  createdAt: string;
+};
+
+type MCPServersData = {
+  mcpServers: MCPServer[];
+};
+
 const PENDING_QUERY = `
 query PendingApprovals($limit: Int!) {
   pendingApprovals(limit: $limit) {
@@ -88,6 +100,18 @@ mutation Deny($id: String!, $note: String) {
 }
 `;
 
+const MCP_SERVERS_QUERY = `
+query MCPServers {
+  mcpServers {
+    id
+    name
+    baseUrl
+    toolPrefix
+    createdAt
+  }
+}
+`;
+
 function formatTime(iso: string) {
   try {
     return new Date(iso).toLocaleString();
@@ -120,6 +144,8 @@ export default function ApprovalsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [leaderboardErr, setLeaderboardErr] = useState<string | null>(null);
+  const [mcpServers, setMcpServers] = useState<MCPServer[]>([]);
+  const [mcpErr, setMcpErr] = useState<string | null>(null);
 
   const pendingCount = items.length;
 
@@ -157,6 +183,27 @@ export default function ApprovalsPage() {
     }
 
     loadLeaderboard();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMcpServers() {
+      try {
+        const data = await gql<MCPServersData>(MCP_SERVERS_QUERY);
+        if (!cancelled) {
+          setMcpServers(data.mcpServers ?? []);
+        }
+      } catch (e: any) {
+        if (!cancelled) {
+          setMcpErr(e?.message || "Failed to load MCP servers");
+        }
+      }
+    }
+
+    loadMcpServers();
     return () => {
       cancelled = true;
     };
@@ -391,6 +438,33 @@ export default function ApprovalsPage() {
                 <div className="mt-2">
                   Safety pass rate, false-block rate, and audit completeness across the last eval run.
                 </div>
+              </div>
+
+              <div className="mt-6 rounded-xl border border-white/10 bg-[#0f0f0f] p-4 text-xs text-white/60">
+                <div className="uppercase tracking-[0.2em] text-white/40">Connected MCPs</div>
+                {mcpErr && (
+                  <div className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 p-2 text-red-200">
+                    {mcpErr}
+                  </div>
+                )}
+                {mcpServers.length === 0 ? (
+                  <div className="mt-2 text-white/50">No MCP servers registered.</div>
+                ) : (
+                  <div className="mt-3 space-y-2">
+                    {mcpServers.map((srv) => (
+                      <div
+                        key={srv.id}
+                        className="rounded-lg border border-white/10 bg-black/30 p-3"
+                      >
+                        <div className="flex items-center justify-between text-sm text-white/80">
+                          <span>{srv.name}</span>
+                          <Chip label={srv.toolPrefix} tone="lime" />
+                        </div>
+                        <div className="mt-2 text-[11px] text-white/50">{srv.baseUrl}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </section>
           </div>
