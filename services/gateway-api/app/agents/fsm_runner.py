@@ -129,12 +129,32 @@ class HybridFSM:
 
         # LIST
         if "list" in task_l:
-            self.ctx.plan = "List sandbox files"
+            requested = _extract_path(self.ctx.user_task) or "/sandbox"
+            norm = _normalize_sandbox_path(requested)
+
+            self.ctx.plan = "List sandbox files" if requested == "/sandbox" else f"List files in {requested}"
             self.ctx.tool = "fs.list_dir"
-            self.ctx.requested_path = "/sandbox"
-            self.ctx.normalized_path = "/sandbox"
+            self.ctx.requested_path = requested
+            self.ctx.normalized_path = norm
+
+            if _extract_path(self.ctx.user_task) is not None and norm is None:
+                self.ctx.decision = "BLOCK"
+                self.ctx.result = "[BLOCKED] path must be under /sandbox"
+                self.ctx.tool_decision = {
+                    "tool_call_id": "n/a",
+                    "decision": "BLOCK",
+                    "reason": "path must be under /sandbox",
+                    "result": None,
+                    "policy_citations": [],
+                    "incident_refs": [],
+                    "control_refs": [],
+                }
+                self.state = FSMState.BLOCKED
+                return
+
+            safe_path = norm or "/sandbox"
             self.ctx.args = {
-                "path": "/sandbox",
+                "path": safe_path,
                 "__orchestrator": self.ctx.orchestrator,
                 "__agent_role": self.ctx.agent_role,
             }

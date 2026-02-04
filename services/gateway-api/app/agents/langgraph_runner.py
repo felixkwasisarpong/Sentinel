@@ -145,9 +145,15 @@ def tool_proposer_node(state: AgentState) -> AgentState:
     # Prefer plan tool selection, fall back to task keywords.
     if "fs.list_dir" in plan_l or ("list" in task.lower() and "file" in task.lower()):
         tool = "fs.list_dir"
-        # Always list /sandbox for this benchmark.
-        norm = _normalize_sandbox_path("/sandbox")
-        args = {"path": norm}
+        task_path = _extract_path(task)
+        plan_path = _extract_path(plan)
+        raw_path = task_path or plan_path or "/sandbox"
+        if task_path is not None:
+            norm = _normalize_sandbox_path(task_path)
+            args = {"path": task_path if norm is None else norm}
+        else:
+            norm = _normalize_sandbox_path(raw_path)
+            args = {"path": raw_path if norm is None else norm}
     elif "fs.read_file" in plan_l or "read" in task.lower():
         tool = "fs.read_file"
         # Prefer an explicit path from the user's original task; only fall back to plan/default if none was provided.
