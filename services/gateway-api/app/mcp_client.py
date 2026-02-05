@@ -25,7 +25,11 @@ def _build_jsonrpc_endpoint(base_url: str) -> str:
     return base
 
 
-def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None]:
+def _uses_jsonrpc(base_url: str) -> bool:
+    return "/mcp" in (base_url or "")
+
+
+def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None, bool]:
     headers = {}
     db = SessionLocal()
     try:
@@ -33,21 +37,72 @@ def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None]:
         if server:
             if server.auth_header and server.auth_token:
                 headers[server.auth_header] = server.auth_token
-            return _build_tools_endpoint(server.base_url), headers, server.tool_prefix
+            return server.base_url, headers, server.tool_prefix, _uses_jsonrpc(server.base_url)
     finally:
         try:
             db.close()
         except Exception:
             pass
 
-    return _build_tools_endpoint(DEFAULT_MCP_URL), headers, None
+    return DEFAULT_MCP_URL, headers, None, _uses_jsonrpc(DEFAULT_MCP_URL)
+
+
+def _parse_jsonrpc_response(resp: requests.Response) -> dict:
+    content_type = (resp.headers.get("Content-Type") or "").lower()
+    text = resp.text or ""
+    if "text/event-stream" in content_type or text.strip().startswith("data:"):
+        data_lines = []
+        for line in text.splitlines():
+            if line.startswith("data:"):
+                data_lines.append(line[len("data:"):].strip())
+        if data_lines:
+            return json.loads(data_lines[-1])
+    if not text.strip():
+        raise ValueError("Empty response from MCP endpoint")
+    try:
+        return resp.json()
+    except json.JSONDecodeError:
+        data_lines = []
+        for line in text.splitlines():
+            if line.startswith("data:"):
+                data_lines.append(line[len("data:"):].strip())
+        if data_lines:
+            return json.loads(data_lines[-1])
+        raise
 
 
 def call_tool(tool: str, args: dict):
-    endpoint, headers, prefix = _resolve_mcp_endpoint(tool)
+    base_url, headers, prefix, jsonrpc = _resolve_mcp_endpoint(tool)
     tool_name = tool
     if prefix and tool_name.startswith(prefix):
         tool_name = tool_name[len(prefix):]
+    if jsonrpc:
+        endpoint = _build_jsonrpc_endpoint(base_url)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "tools-call",
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": args},
+        }
+        resp = requests.post(
+            endpoint,
+            json=payload,
+            headers={**headers, "Content-Type": "application/json", "Accept": "application/json, text/event-stream"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = _parse_jsonrpc_response(resp)
+        result = data.get("result")
+        # Normalize to match MCP /tools shape
+        if isinstance(result, dict) and "content" in result:
+            content = result.get("content")
+            if isinstance(content, list) and content:
+                item = content[0]
+                if isinstance(item, dict) and item.get("type") == "text":
+                    return {"result": item.get("text", "")}
+        return {"result": result}
+
+    endpoint = _build_tools_endpoint(base_url)
     resp = requests.post(
         endpoint,
         json={"tool": tool_name, "args": args},
@@ -76,28 +131,7 @@ def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | 
     def _post(url: str):
         r = requests.post(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
-        content_type = (r.headers.get("Content-Type") or "").lower()
-        if "text/event-stream" in content_type:
-            # Parse SSE and extract JSON from "data:" lines
-            data_lines = []
-            for line in r.text.splitlines():
-                if line.startswith("data:"):
-                    data_lines.append(line[len("data:"):].strip())
-            if data_lines:
-                return json.loads(data_lines[-1])
-        if not r.text or not r.text.strip():
-            raise ValueError("Empty response from MCP tools/list endpoint")
-        try:
-            return r.json()
-        except json.JSONDecodeError:
-            # Some servers still reply with SSE without correct content-type.
-            data_lines = []
-            for line in r.text.splitlines():
-                if line.startswith("data:"):
-                    data_lines.append(line[len("data:"):].strip())
-            if data_lines:
-                return json.loads(data_lines[-1])
-            raise
+        return _parse_jsonrpc_response(r)
 
     try:
         data = _post(endpoint)
