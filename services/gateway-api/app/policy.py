@@ -50,10 +50,15 @@ def _policy_from_prefix(tool: str) -> tuple[str, str, float] | None:
 
 def evaluate_policy(tool: str, args: dict) -> tuple[str, str, float]:
     if tool == "fs.list_dir":
+        path = str(args.get("path", "") or "/sandbox")
+        if not _is_under_sandbox(path):
+            return "BLOCK", "path must be under /sandbox", 1.0
         return "ALLOW", "Directory listing allowed", 0.0
 
     if tool == "fs.read_file":
         path = str(args.get("path", ""))
+        if path and not _is_under_sandbox(path):
+            return "BLOCK", "path must be under /sandbox", 1.0
         for blocked in BLOCKED_FILENAMES:
             if blocked in path:
                 return "BLOCK", "Access to secret file denied", 1.0

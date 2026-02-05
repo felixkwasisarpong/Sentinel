@@ -2,6 +2,7 @@ import strawberry
 import time
 import json
 import requests
+import uuid
 from typing import Any
 from datetime import datetime, timezone
 
@@ -87,6 +88,13 @@ class ToolDecision:
     policy_citations: list[str]
     incident_refs: list[str]
     control_refs: list[str]
+
+
+def _coerce_uuid(value: str):
+    try:
+        return uuid.UUID(value)
+    except Exception:
+        return value
 
 
 @strawberry.type
@@ -312,7 +320,8 @@ class Mutation:
     ) -> ToolDecision:
         db = SessionLocal()
         try:
-            tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id).first()
+            tool_call_id_value = _coerce_uuid(tool_call_id)
+            tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id_value).first()
             if not tool_call:
                 return ToolDecision(
                     tool_call_id="n/a",
@@ -419,7 +428,8 @@ class Mutation:
     ) -> ToolDecision:
         db = SessionLocal()
         try:
-            tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id).first()
+            tool_call_id_value = _coerce_uuid(tool_call_id)
+            tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id_value).first()
             if not tool_call:
                 return ToolDecision(
                     tool_call_id="n/a",
