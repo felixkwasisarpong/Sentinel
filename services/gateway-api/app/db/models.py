@@ -21,8 +21,10 @@ class ToolCall(Base):
     tool_name = Column(String, nullable=False)
     args_redacted = Column(JSON, nullable=False)
     status = Column(String, nullable=False, default="EXECUTED")
+    approved_by = Column(String, nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     approval_note = Column(Text, nullable=True)
+    result = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class Decision(Base):
