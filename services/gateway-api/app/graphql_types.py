@@ -44,6 +44,22 @@ class MCPServerType:
 
 
 @strawberry.type
+class MCPToolType:
+    id: str
+    server_id: str
+    name: str
+    description: str | None
+    input_schema: JSON | None
+    created_at: datetime
+
+
+@strawberry.type
+class MCPSyncResult:
+    server_name: str
+    tool_count: int
+
+
+@strawberry.type
 class Query:
     @strawberry.field
     def ping(self) -> str:

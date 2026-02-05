@@ -6,7 +6,7 @@ from typing import Any
 from datetime import datetime, timezone
 
 from .policy import evaluate_policy
-from .mcp_client import call_tool
+from .mcp_client import call_tool, list_tools
 from .metrics import tool_calls, decision_latency
 from .db.session import SessionLocal
 from .db.models import Run, ToolCall as DbToolCall, Decision, MCPServer
@@ -19,8 +19,11 @@ from .db.queries import (
     get_recent_decisions,
     get_mcp_servers,
     get_mcp_server_for_tool,
+    get_mcp_server_by_name,
+    replace_mcp_tools,
+    get_mcp_tools_for_server,
 )
-from .graphql_types import RunType, ToolCallType, DecisionType, MCPServerType
+from .graphql_types import RunType, ToolCallType, DecisionType, MCPServerType, MCPToolType, MCPSyncResult
 
 # Phase 2A (optional): Neo4j policy graph citations
 try:
@@ -530,6 +533,24 @@ class Mutation:
             except Exception:
                 pass
 
+    @strawberry.mutation
+    def sync_mcp_tools(self, server_name: str) -> MCPSyncResult:
+        db = SessionLocal()
+        try:
+            server = get_mcp_server_by_name(db, server_name)
+            if not server:
+                raise ValueError(f"MCP server not found: {server_name}")
+
+            tools = list_tools(server.base_url, server.auth_header, server.auth_token)
+            count = replace_mcp_tools(db, server.id, tools)
+            db.commit()
+            return MCPSyncResult(server_name=server.name, tool_count=count)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
 
 def _resolve_citations(decision: Decision | None, tool_name: str) -> tuple[list[str], list[str], list[str]]:
     if decision is not None and hasattr(decision, "policy_citations"):
@@ -688,6 +709,29 @@ class Query:
                 created_at=s.created_at,
             )
             for s in servers
+        ]
+        db.close()
+        return result
+
+    @strawberry.field(name="mcpTools")
+    def mcp_tools(self, server_name: str) -> list[MCPToolType]:
+        db = SessionLocal()
+        server = get_mcp_server_by_name(db, server_name)
+        if not server:
+            db.close()
+            return []
+
+        tools = get_mcp_tools_for_server(db, server.id)
+        result = [
+            MCPToolType(
+                id=str(t.id),
+                server_id=str(t.server_id),
+                name=t.name,
+                description=t.description,
+                input_schema=t.input_schema,
+                created_at=t.created_at,
+            )
+            for t in tools
         ]
         db.close()
         return result
