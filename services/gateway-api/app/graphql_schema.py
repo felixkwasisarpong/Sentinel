@@ -5,11 +5,14 @@ import requests
 from typing import Any
 from datetime import datetime, timezone
 
-from .policy import evaluate_policy
-from .mcp_client import call_tool, list_tools
+from .mcp_client import list_tools
 from .metrics import tool_calls, decision_latency
+from .tool_backends.registry import get_tool_backend
+from .core.audit import create_run, create_tool_call, persist_decision, update_tool_call_status
+from .core.policy_engine import evaluate_tool_call
+from .core.policy_graph import get_citations_for_decision
 from .db.session import SessionLocal
-from .db.models import Run, ToolCall as DbToolCall, Decision, MCPServer
+from .db.models import ToolCall as DbToolCall, Decision, MCPServer
 from .redaction import redact_args
 from .db.queries import (
     get_runs,
@@ -18,19 +21,11 @@ from .db.queries import (
     get_decision_for_tool_call,
     get_recent_decisions,
     get_mcp_servers,
-    get_mcp_server_for_tool,
     get_mcp_server_by_name,
     replace_mcp_tools,
     get_mcp_tools_for_server,
 )
 from .graphql_types import RunType, ToolCallType, DecisionType, MCPServerType, MCPToolType, MCPSyncResult
-
-# Phase 2A (optional): Neo4j policy graph citations
-try:
-    from .policy_graph import lookup_policy_ids
-except Exception:
-    lookup_policy_ids = None
-
 
 try:
     from strawberry.scalars import JSON as JSONScalar
@@ -97,13 +92,6 @@ class Mutation:
         start = time.time()
 
         tool_call_id = "n/a"
-        try:
-            if lookup_policy_ids is None:
-                policies, incidents, controls = [], [], []
-            else:
-                policies, incidents, controls = lookup_policy_ids(tool)
-        except Exception:
-            policies, incidents, controls = [], [], []
 
         try:
             # Accept JSON as a string from GraphQL and parse it into a dict
@@ -117,17 +105,21 @@ class Mutation:
                 decision_latency.observe((time.time() - start) * 1000)
 
                 # Persist run + toolcall + decision even for invalid args
-                run = Run(orchestrator="manual", agent_id="manual")
-                db.add(run)
-                db.flush()
-
-                tool_call = DbToolCall(run_id=run.id, tool_name=tool, args_redacted={"error": "invalid_args"})
-                db.add(tool_call)
-                db.flush()
+                run = create_run(db, orchestrator="manual", agent_id="manual")
+                tool_call = create_tool_call(db, run.id, tool, {"error": "invalid_args"})
                 tool_call_id = str(tool_call.id)
 
-                decision = Decision(tool_call_id=tool_call.id, decision="BLOCK", reason="Invalid JSON in args", risk_score=None)
-                db.add(decision)
+                policies, incidents, controls = get_citations_for_decision(tool, {})
+                persist_decision(
+                    db,
+                    tool_call.id,
+                    decision="BLOCK",
+                    reason="Invalid JSON in args",
+                    risk_score=None,
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
+                )
                 db.commit()
                 return ToolDecision(
                     tool_call_id=tool_call_id,
@@ -143,47 +135,47 @@ class Mutation:
             meta_args = {k: v for k, v in parsed_args.items() if str(k).startswith("__")}
             tool_args = {k: v for k, v in parsed_args.items() if not str(k).startswith("__")}
 
-            run = Run(
+            run = create_run(
+                db,
                 orchestrator=meta_args.get("__orchestrator", "manual"),
                 agent_id=meta_args.get("__agent_role", "manual"),
             )
-            db.add(run)
-            db.flush()
 
             safe_args = redact_args(tool_args)
 
             # Create tool_call early so we can always attach a Decision row (ALLOW or BLOCK)
-            tool_call = DbToolCall(
-                run_id=run.id,
-                tool_name=tool,
-                args_redacted=safe_args,
-            )
-            db.add(tool_call)
-            db.flush()
+            tool_call = create_tool_call(db, run.id, tool, safe_args)
             tool_call_id = str(tool_call.id)
 
-            decision_value, reason, risk_score = evaluate_policy(tool, tool_args)
+            decision_payload = evaluate_tool_call(
+                tool,
+                tool_args,
+                context={
+                    "orchestrator": run.orchestrator,
+                    "agent_id": run.agent_id,
+                },
+            )
+            decision_value = decision_payload.decision
+            reason = decision_payload.reason
+            risk_score = decision_payload.risk_score
+            policies = decision_payload.policy_citations
+            incidents = decision_payload.incident_refs
+            controls = decision_payload.control_refs
             if decision_value == "APPROVAL_REQUIRED":
                 tool_calls.labels(tool=tool, decision="APPROVAL_REQUIRED").inc()
                 decision_latency.observe((time.time() - start) * 1000)
 
-                tool_call.status = "PENDING"
-                db.add(tool_call)
-
-                decision = Decision(
-                    tool_call_id=tool_call.id,
+                update_tool_call_status(db, tool_call, "PENDING")
+                persist_decision(
+                    db,
+                    tool_call.id,
                     decision="APPROVAL_REQUIRED",
                     reason=reason,
                     risk_score=risk_score,
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
                 )
-                if hasattr(decision, "policy_citations"):
-                    decision.policy_citations = policies
-                if hasattr(decision, "incident_refs"):
-                    decision.incident_refs = incidents
-                if hasattr(decision, "control_refs"):
-                    decision.control_refs = controls
-
-                db.add(decision)
                 db.commit()
                 return ToolDecision(
                     tool_call_id=tool_call_id,
@@ -200,21 +192,16 @@ class Mutation:
                 tool_calls.labels(tool=tool, decision="BLOCK").inc()
                 decision_latency.observe((time.time() - start) * 1000)
 
-                decision = Decision(
-                    tool_call_id=tool_call.id,
+                persist_decision(
+                    db,
+                    tool_call.id,
                     decision=decision_value,
                     reason=reason,
                     risk_score=risk_score,
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
                 )
-                # Persist citations if Decision model supports these columns
-                if hasattr(decision, "policy_citations"):
-                    decision.policy_citations = policies
-                if hasattr(decision, "incident_refs"):
-                    decision.incident_refs = incidents
-                if hasattr(decision, "control_refs"):
-                    decision.control_refs = controls
-
-                db.add(decision)
                 db.commit()
                 return ToolDecision(
                     tool_call_id=tool_call_id,
@@ -227,16 +214,18 @@ class Mutation:
                     control_refs=controls,
                 )
 
-            # Allowed: execute tool via MCP
+            # Allowed: execute tool via ToolBackend
             try:
-                result = call_tool(tool, tool_args)
-            except requests.RequestException as exc:
+                tool_backend = get_tool_backend()
+                result = tool_backend.call_tool(tool, tool_args)
+            except Exception as exc:
                 detail = None
-                if getattr(exc, "response", None) is not None:
-                    try:
-                        detail = exc.response.json().get("detail")
-                    except Exception:
-                        detail = exc.response.text
+                if isinstance(exc, requests.RequestException):
+                    if getattr(exc, "response", None) is not None:
+                        try:
+                            detail = exc.response.json().get("detail")
+                        except Exception:
+                            detail = exc.response.text
 
                 tool_calls.labels(tool=tool, decision="BLOCK").inc()
                 decision_latency.observe((time.time() - start) * 1000)
@@ -245,20 +234,16 @@ class Mutation:
                 if not detail:
                     reason_text = f"Tool call failed: {reason_text}"
 
-                decision = Decision(
-                    tool_call_id=tool_call.id,
+                persist_decision(
+                    db,
+                    tool_call.id,
                     decision="BLOCK",
                     reason=reason_text,
                     risk_score=risk_score,
+                    policy_citations=policies,
+                    incident_refs=incidents,
+                    control_refs=controls,
                 )
-                if hasattr(decision, "policy_citations"):
-                    decision.policy_citations = policies
-                if hasattr(decision, "incident_refs"):
-                    decision.incident_refs = incidents
-                if hasattr(decision, "control_refs"):
-                    decision.control_refs = controls
-
-                db.add(decision)
                 db.commit()
                 return ToolDecision(
                     tool_call_id=tool_call_id,
@@ -280,20 +265,16 @@ class Mutation:
             tool_calls.labels(tool=tool, decision="ALLOW").inc()
             decision_latency.observe((time.time() - start) * 1000)
 
-            decision = Decision(
-                tool_call_id=tool_call.id,
+            persist_decision(
+                db,
+                tool_call.id,
                 decision="ALLOW",
                 reason=reason,
                 risk_score=risk_score,
+                policy_citations=policies,
+                incident_refs=incidents,
+                control_refs=controls,
             )
-            if hasattr(decision, "policy_citations"):
-                decision.policy_citations = policies
-            if hasattr(decision, "incident_refs"):
-                decision.incident_refs = incidents
-            if hasattr(decision, "control_refs"):
-                decision.control_refs = controls
-
-            db.add(decision)
             db.commit()
 
             return ToolDecision(
@@ -343,15 +324,19 @@ class Mutation:
                 )
 
             # Mark approved
-            tool_call.status = "APPROVED"
-            tool_call.approved_at = datetime.now(timezone.utc)
-            tool_call.approval_note = note
-            db.add(tool_call)
+            update_tool_call_status(
+                db,
+                tool_call,
+                "APPROVED",
+                approved_at=datetime.now(timezone.utc),
+                approval_note=note,
+            )
             db.flush()
 
-            # Execute tool with stored args (redacted)
+            # Execute tool with stored args (redacted) via ToolBackend
             try:
-                result = call_tool(tool_call.tool_name, tool_call.args_redacted or {})
+                tool_backend = get_tool_backend()
+                result = tool_backend.call_tool(tool_call.tool_name, tool_call.args_redacted or {})
                 result_value = result.get("result") if isinstance(result, dict) and "result" in result else result
                 if isinstance(result_value, (dict, list)):
                     result_text = json.dumps(result_value)
@@ -359,13 +344,14 @@ class Mutation:
                     result_text = str(result_value)
                 decision_value = "ALLOW"
                 reason_text = "Approved"
-            except requests.RequestException as exc:
+            except Exception as exc:
                 detail = None
-                if getattr(exc, "response", None) is not None:
-                    try:
-                        detail = exc.response.json().get("detail")
-                    except Exception:
-                        detail = exc.response.text
+                if isinstance(exc, requests.RequestException):
+                    if getattr(exc, "response", None) is not None:
+                        try:
+                            detail = exc.response.json().get("detail")
+                        except Exception:
+                            detail = exc.response.text
                 reason_text = detail or str(exc)
                 if not detail:
                     reason_text = f"Tool call failed: {reason_text}"
@@ -375,26 +361,21 @@ class Mutation:
             # Persist decision
             prior = get_decision_for_tool_call(db, tool_call.id)
             risk_score = getattr(prior, "risk_score", 0.0) if prior else 0.0
-            decision = Decision(
-                tool_call_id=tool_call.id,
+            policies, incidents, controls = get_citations_for_decision(tool_call.tool_name, tool_call.args_redacted)
+            persist_decision(
+                db,
+                tool_call.id,
                 decision=decision_value,
                 reason=reason_text,
                 risk_score=risk_score,
+                policy_citations=policies,
+                incident_refs=incidents,
+                control_refs=controls,
             )
-            db.add(decision)
 
             # Mark executed
-            tool_call.status = "EXECUTED"
-            db.add(tool_call)
+            update_tool_call_status(db, tool_call, "EXECUTED")
             db.commit()
-
-            try:
-                if lookup_policy_ids is None:
-                    policies, incidents, controls = [], [], []
-                else:
-                    policies, incidents, controls = lookup_policy_ids(tool_call.tool_name)
-            except Exception:
-                policies, incidents, controls = [], [], []
 
             return ToolDecision(
                 tool_call_id=str(tool_call.id),
@@ -441,22 +422,19 @@ class Mutation:
                     control_refs=[],
                 )
 
-            tool_call.status = "DENIED"
-            tool_call.approved_at = datetime.now(timezone.utc)
-            tool_call.approval_note = note
-            db.add(tool_call)
+            update_tool_call_status(
+                db,
+                tool_call,
+                "DENIED",
+                approved_at=datetime.now(timezone.utc),
+                approval_note=note,
+            )
             db.flush()
 
             prior = get_decision_for_tool_call(db, tool_call.id)
             db.commit()
 
-            try:
-                if lookup_policy_ids is None:
-                    policies, incidents, controls = [], [], []
-                else:
-                    policies, incidents, controls = lookup_policy_ids(tool_call.tool_name)
-            except Exception:
-                policies, incidents, controls = [], [], []
+            policies, incidents, controls = get_citations_for_decision(tool_call.tool_name, tool_call.args_redacted)
 
             decision_value = getattr(prior, "decision", None) or "APPROVAL_REQUIRED"
             reason_value = note or getattr(prior, "reason", None) or "Denied"
@@ -559,13 +537,7 @@ def _resolve_citations(decision: Decision | None, tool_name: str) -> tuple[list[
         controls = getattr(decision, "control_refs", []) or []
         return policies, incidents, controls
 
-    if lookup_policy_ids is None:
-        return [], [], []
-
-    try:
-        return lookup_policy_ids(tool_name)
-    except Exception:
-        return [], [], []
+    return get_citations_for_decision(tool_name)
 
 
 @strawberry.type

@@ -8,18 +8,7 @@ from .graphql_schema import schema
 from .db.base import Base
 from .db.session import engine, SessionLocal
 from .db.models import MCPServer
-from .agents.langgraph_runner import build_langgraph
-from .agents.state import AgentState
-from .agents.fsm_runner import HybridFSM
-
-
-from .agents.crewai_runner import run_crewai
-
-
-
-langgraph = build_langgraph()
-
-
+from .orchestrators.registry import get_orchestrator
 
 app = FastAPI(title="Senteniel Gateway")
 
@@ -48,7 +37,7 @@ def _normalize_mcp_base(url: str) -> str:
 
 
 def ensure_default_mcp_server() -> None:
-    base_url = _normalize_mcp_base(os.getenv("MCP_URL", "http://mcp-sandbox:7001"))
+    base_url = _normalize_mcp_base(os.getenv("MCP_BASE_URL") or os.getenv("MCP_URL", "http://mcp-sandbox:7001"))
     name = os.getenv("MCP_DEFAULT_NAME", "sandbox")
     prefix = os.getenv("MCP_DEFAULT_PREFIX", "fs.")
 
@@ -116,38 +105,26 @@ def _tool_decision_or_default(result: dict | None) -> dict:
     }
 
 
+def _run_orchestrator(task: str, orchestrator_name: str | None) -> dict:
+    try:
+        orchestrator = get_orchestrator(orchestrator_name)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Unknown orchestrator. Use langgraph, fsm, or crewai.",
+        )
+    return orchestrator.run(task, sentinel_client_or_core=None, tool_backend=None)
+
+
 @app.api_route("/agent/run", methods=["GET", "POST"])
-def run_agent(task: str, orchestrator: str = "langgraph"):
-    orchestrator = (orchestrator or "langgraph").strip().lower()
-    if orchestrator in ("langgraph", "lg", "default"):
-        initial_state: AgentState = {
-            "user_task": task,
-            "plan": None,
-            "tool_result": None,
-            "final_answer": None,
-            "tool_decision": None,
-        }
-        result = langgraph.invoke(initial_state)
-        return _tool_decision_or_default(result)
-
-    if orchestrator in ("fsm", "hybrid", "fsm_hybrid"):
-        fsm = HybridFSM(task)
-        result = fsm.run()
-        return _tool_decision_or_default(result)
-
-    if orchestrator in ("crewai", "crew"):
-        result = run_crewai(task)
-        return _tool_decision_or_default(result)
-
-    raise HTTPException(
-        status_code=400,
-        detail="Unknown orchestrator. Use langgraph, fsm, or crewai.",
-    )
+def run_agent(task: str, orchestrator: str | None = None):
+    orchestrator_name = (orchestrator or os.getenv("ORCHESTRATOR", "langgraph")).strip().lower()
+    result = _run_orchestrator(task, orchestrator_name)
+    return _tool_decision_or_default(result)
 
 @app.api_route("/agent/fsm/run", methods=["GET", "POST"])
 def run_fsm(task: str):
-    fsm = HybridFSM(task)
-    ctx = fsm.run()
+    ctx = _run_orchestrator(task, "fsm_hybrid")
     if isinstance(ctx, dict) and ctx.get("tool_decision"):
         return ctx["tool_decision"]
     return {
@@ -162,4 +139,4 @@ def run_fsm(task: str):
 
 @app.api_route("/agent/crew/run", methods=["GET", "POST"])
 def run_crew(task: str):
-    return run_crewai(task)
+    return _run_orchestrator(task, "crewai")

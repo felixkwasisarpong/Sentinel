@@ -6,7 +6,9 @@ from urllib.parse import urlparse
 from .db.session import SessionLocal
 from .db.queries import get_mcp_server_for_tool
 
-DEFAULT_MCP_URL = os.getenv("MCP_URL", "http://mcp-sandbox:7001")
+
+def _default_mcp_url() -> str:
+    return os.getenv("MCP_BASE_URL") or os.getenv("MCP_URL", "http://mcp-sandbox:7001")
 
 
 def _path_is_mcp(base_url: str) -> bool:
@@ -42,7 +44,7 @@ def _uses_jsonrpc(base_url: str) -> bool:
     return _path_is_mcp(base_url or "")
 
 
-def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None, bool]:
+def _resolve_mcp_endpoint(tool: str, base_url_override: str | None = None) -> tuple[str, dict, str | None, bool]:
     headers = {}
     db = SessionLocal()
     try:
@@ -57,7 +59,8 @@ def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None, bool]:
         except Exception:
             pass
 
-    return DEFAULT_MCP_URL, headers, None, _uses_jsonrpc(DEFAULT_MCP_URL)
+    base_url = base_url_override or _default_mcp_url()
+    return base_url, headers, None, _uses_jsonrpc(base_url)
 
 
 def _parse_jsonrpc_response(resp: requests.Response) -> dict:
@@ -99,8 +102,8 @@ def _jsonrpc_error_message(data: dict) -> str | None:
     return str(err)
 
 
-def call_tool(tool: str, args: dict):
-    base_url, headers, prefix, jsonrpc = _resolve_mcp_endpoint(tool)
+def call_tool(tool: str, args: dict, *, base_url: str | None = None):
+    base_url, headers, prefix, jsonrpc = _resolve_mcp_endpoint(tool, base_url_override=base_url)
     tool_name = tool
     if jsonrpc and prefix and tool_name.startswith(prefix):
         tool_name = tool_name[len(prefix):]
