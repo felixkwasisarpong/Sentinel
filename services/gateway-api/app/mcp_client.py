@@ -58,7 +58,7 @@ def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | 
     endpoint = _build_jsonrpc_endpoint(base_url)
     headers = {
         "Content-Type": "application/json",
-        "Accept": "application/json",
+        "Accept": "application/json, text/event-stream",
     }
     if auth_header and auth_token:
         headers[auth_header] = auth_token
@@ -69,9 +69,19 @@ def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | 
         "method": "tools/list",
         "params": {},
     }
-    resp = requests.post(endpoint, json=payload, headers=headers, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
+    def _post(url: str):
+        r = requests.post(url, json=payload, headers=headers, timeout=10)
+        r.raise_for_status()
+        return r.json()
+
+    try:
+        data = _post(endpoint)
+    except requests.HTTPError as exc:
+        # Some MCP servers require a trailing slash on the base path (e.g., /mcp/).
+        if not endpoint.endswith("/"):
+            data = _post(f"{endpoint}/")
+        else:
+            raise exc
 
     if isinstance(data, dict):
         result = data.get("result")
