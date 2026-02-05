@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+from urllib.parse import urlparse
 
 from .db.session import SessionLocal
 from .db.queries import get_mcp_server_for_tool
@@ -8,12 +9,24 @@ from .db.queries import get_mcp_server_for_tool
 DEFAULT_MCP_URL = os.getenv("MCP_URL", "http://mcp-sandbox:7001")
 
 
+def _path_is_mcp(base_url: str) -> bool:
+    try:
+        return (urlparse(base_url).path or "").startswith("/mcp")
+    except Exception:
+        return False
+
+
 def _build_tools_endpoint(base_url: str) -> str:
     base = (base_url or "").rstrip("/")
-    if base.endswith("/tools"):
+    path = ""
+    try:
+        path = urlparse(base).path or ""
+    except Exception:
+        path = ""
+    if path.endswith("/tools"):
         return base
     # Remote MCPs may expose toolsets directly under /mcp/... paths.
-    if "/mcp" in base:
+    if path.startswith("/mcp"):
         return base
     return f"{base}/tools"
 
@@ -26,7 +39,7 @@ def _build_jsonrpc_endpoint(base_url: str) -> str:
 
 
 def _uses_jsonrpc(base_url: str) -> bool:
-    return "/mcp" in (base_url or "")
+    return _path_is_mcp(base_url or "")
 
 
 def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None, bool]:
@@ -71,10 +84,25 @@ def _parse_jsonrpc_response(resp: requests.Response) -> dict:
         raise
 
 
+def _jsonrpc_error_message(data: dict) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    err = data.get("error")
+    if not err:
+        return None
+    if isinstance(err, dict):
+        msg = err.get("message") or err.get("error") or "Unknown MCP error"
+        details = err.get("data")
+        if details:
+            return f"{msg} ({details})"
+        return msg
+    return str(err)
+
+
 def call_tool(tool: str, args: dict):
     base_url, headers, prefix, jsonrpc = _resolve_mcp_endpoint(tool)
     tool_name = tool
-    if prefix and tool_name.startswith(prefix):
+    if jsonrpc and prefix and tool_name.startswith(prefix):
         tool_name = tool_name[len(prefix):]
     if jsonrpc:
         endpoint = _build_jsonrpc_endpoint(base_url)
@@ -92,6 +120,9 @@ def call_tool(tool: str, args: dict):
         )
         resp.raise_for_status()
         data = _parse_jsonrpc_response(resp)
+        err = _jsonrpc_error_message(data)
+        if err:
+            raise requests.RequestException(f"MCP error: {err}")
         result = data.get("result")
         # Normalize to match MCP /tools shape
         if isinstance(result, dict) and "content" in result:
@@ -99,7 +130,13 @@ def call_tool(tool: str, args: dict):
             if isinstance(content, list) and content:
                 item = content[0]
                 if isinstance(item, dict) and item.get("type") == "text":
-                    return {"result": item.get("text", "")}
+                    text = item.get("text", "")
+                    if isinstance(text, str) and text.strip().startswith(("{", "[")):
+                        try:
+                            return {"result": json.loads(text)}
+                        except Exception:
+                            pass
+                    return {"result": text}
         return {"result": result}
 
     endpoint = _build_tools_endpoint(base_url)
@@ -141,6 +178,9 @@ def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | 
             data = _post(f"{endpoint}/")
         else:
             raise exc
+    err = _jsonrpc_error_message(data)
+    if err:
+        raise requests.RequestException(f"MCP error: {err}")
 
     if isinstance(data, dict):
         result = data.get("result")

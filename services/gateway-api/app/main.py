@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from strawberry.fastapi import GraphQLRouter
 from prometheus_client import make_asgi_app
@@ -93,30 +93,58 @@ app.mount("/metrics", make_asgi_app())
 
 
 
-@app.post("/agent/run")
-def run_agent(task: str):
-    initial_state: AgentState = {
-        "user_task": task,
-        "plan": None,
-        "tool_result": None,
-        "final_answer": None,
-        "tool_decision": None,
-    }
+def _tool_decision_or_default(result: dict | None) -> dict:
+    if isinstance(result, dict):
+        tool_decision = result.get("tool_decision")
+        if tool_decision:
+            return tool_decision
+        if "final_answer" in result:
+            final_answer = result.get("final_answer")
+        else:
+            final_answer = result.get("result")
+    else:
+        final_answer = None
 
-    result = langgraph.invoke(initial_state)
-    if isinstance(result, dict) and result.get("tool_decision"):
-        return result["tool_decision"]
     return {
         "tool_call_id": "n/a",
         "decision": "ALLOW",
         "reason": "No tool required",
-        "result": result.get("final_answer") if isinstance(result, dict) else None,
+        "result": final_answer,
         "policy_citations": [],
         "incident_refs": [],
         "control_refs": [],
     }
 
-@app.post("/agent/fsm/run")
+
+@app.api_route("/agent/run", methods=["GET", "POST"])
+def run_agent(task: str, orchestrator: str = "langgraph"):
+    orchestrator = (orchestrator or "langgraph").strip().lower()
+    if orchestrator in ("langgraph", "lg", "default"):
+        initial_state: AgentState = {
+            "user_task": task,
+            "plan": None,
+            "tool_result": None,
+            "final_answer": None,
+            "tool_decision": None,
+        }
+        result = langgraph.invoke(initial_state)
+        return _tool_decision_or_default(result)
+
+    if orchestrator in ("fsm", "hybrid", "fsm_hybrid"):
+        fsm = HybridFSM(task)
+        result = fsm.run()
+        return _tool_decision_or_default(result)
+
+    if orchestrator in ("crewai", "crew"):
+        result = run_crewai(task)
+        return _tool_decision_or_default(result)
+
+    raise HTTPException(
+        status_code=400,
+        detail="Unknown orchestrator. Use langgraph, fsm, or crewai.",
+    )
+
+@app.api_route("/agent/fsm/run", methods=["GET", "POST"])
 def run_fsm(task: str):
     fsm = HybridFSM(task)
     ctx = fsm.run()
@@ -132,6 +160,6 @@ def run_fsm(task: str):
         "control_refs": [],
     }
 
-@app.post("/agent/crew/run")
+@app.api_route("/agent/crew/run", methods=["GET", "POST"])
 def run_crew(task: str):
     return run_crewai(task)
