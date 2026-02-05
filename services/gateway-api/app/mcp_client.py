@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+from urllib.parse import urlparse
 
 from .db.session import SessionLocal
 from .db.queries import get_mcp_server_for_tool
@@ -8,12 +9,24 @@ from .db.queries import get_mcp_server_for_tool
 DEFAULT_MCP_URL = os.getenv("MCP_URL", "http://mcp-sandbox:7001")
 
 
+def _path_is_mcp(base_url: str) -> bool:
+    try:
+        return (urlparse(base_url).path or "").startswith("/mcp")
+    except Exception:
+        return False
+
+
 def _build_tools_endpoint(base_url: str) -> str:
     base = (base_url or "").rstrip("/")
-    if base.endswith("/tools"):
+    path = ""
+    try:
+        path = urlparse(base).path or ""
+    except Exception:
+        path = ""
+    if path.endswith("/tools"):
         return base
     # Remote MCPs may expose toolsets directly under /mcp/... paths.
-    if "/mcp" in base:
+    if path.startswith("/mcp"):
         return base
     return f"{base}/tools"
 
@@ -26,7 +39,7 @@ def _build_jsonrpc_endpoint(base_url: str) -> str:
 
 
 def _uses_jsonrpc(base_url: str) -> bool:
-    return "/mcp" in (base_url or "")
+    return _path_is_mcp(base_url or "")
 
 
 def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None, bool]:
@@ -89,7 +102,7 @@ def _jsonrpc_error_message(data: dict) -> str | None:
 def call_tool(tool: str, args: dict):
     base_url, headers, prefix, jsonrpc = _resolve_mcp_endpoint(tool)
     tool_name = tool
-    if prefix and tool_name.startswith(prefix):
+    if jsonrpc and prefix and tool_name.startswith(prefix):
         tool_name = tool_name[len(prefix):]
     if jsonrpc:
         endpoint = _build_jsonrpc_endpoint(base_url)
