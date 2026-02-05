@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 
 from .db.session import SessionLocal
@@ -72,6 +73,15 @@ def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | 
     def _post(url: str):
         r = requests.post(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
+        content_type = (r.headers.get("Content-Type") or "").lower()
+        if "text/event-stream" in content_type:
+            # Parse SSE and extract JSON from "data:" lines
+            data_lines = []
+            for line in r.text.splitlines():
+                if line.startswith("data:"):
+                    data_lines.append(line[len("data:"):].strip())
+            if data_lines:
+                return json.loads(data_lines[-1])
         return r.json()
 
     try:
