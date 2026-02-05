@@ -82,7 +82,19 @@ def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | 
                     data_lines.append(line[len("data:"):].strip())
             if data_lines:
                 return json.loads(data_lines[-1])
-        return r.json()
+        if not r.text or not r.text.strip():
+            raise ValueError("Empty response from MCP tools/list endpoint")
+        try:
+            return r.json()
+        except json.JSONDecodeError:
+            # Some servers still reply with SSE without correct content-type.
+            data_lines = []
+            for line in r.text.splitlines():
+                if line.startswith("data:"):
+                    data_lines.append(line[len("data:"):].strip())
+            if data_lines:
+                return json.loads(data_lines[-1])
+            raise
 
     try:
         data = _post(endpoint)
