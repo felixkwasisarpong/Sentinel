@@ -17,7 +17,6 @@ type PendingApproval = {
   createdAt: string;
   status: string;
   approvedAt: string | null;
-  approvedBy?: string | null;
   approvalNote: string | null;
   argsRedacted: any;
   decision: Decision | null;
@@ -35,7 +34,6 @@ query PendingApprovals($limit: Int!) {
     createdAt
     status
     approvedAt
-    approvedBy
     approvalNote
     argsRedacted
     decision {
