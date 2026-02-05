@@ -1,9 +1,13 @@
+import os
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from strawberry.fastapi import GraphQLRouter
 from prometheus_client import make_asgi_app
 from .graphql_schema import schema
 from .db.base import Base
-from .db.session import engine
+from .db.session import engine, SessionLocal
+from .db.models import MCPServer
 from .agents.langgraph_runner import build_langgraph
 from .agents.state import AgentState
 from .agents.fsm_runner import HybridFSM
@@ -19,7 +23,65 @@ langgraph = build_langgraph()
 
 app = FastAPI(title="Senteniel Gateway")
 
+# Allow browser-based UI calls to GraphQL/REST.
+allowed_origins = [
+    o.strip()
+    for o in (os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","))
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 Base.metadata.create_all(bind=engine)
+
+
+def _normalize_mcp_base(url: str) -> str:
+    url = (url or "").rstrip("/")
+    if url.endswith("/tools"):
+        url = url[: -len("/tools")]
+    return url
+
+
+def ensure_default_mcp_server() -> None:
+    base_url = _normalize_mcp_base(os.getenv("MCP_URL", "http://mcp-sandbox:7001"))
+    name = os.getenv("MCP_DEFAULT_NAME", "sandbox")
+    prefix = os.getenv("MCP_DEFAULT_PREFIX", "fs.")
+
+    db = SessionLocal()
+    try:
+        existing = (
+            db.query(MCPServer)
+            .filter((MCPServer.name == name) | (MCPServer.tool_prefix == prefix))
+            .first()
+        )
+        if existing:
+            existing.base_url = base_url
+            existing.name = name
+            existing.tool_prefix = prefix
+            db.add(existing)
+            db.commit()
+            return
+
+        server = MCPServer(
+            name=name,
+            base_url=base_url,
+            tool_prefix=prefix,
+        )
+        db.add(server)
+        db.commit()
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+
+
+ensure_default_mcp_server()
 
 
 
