@@ -8,7 +8,13 @@ from datetime import datetime, timezone
 from .mcp_client import list_tools
 from .metrics import tool_calls, decision_latency
 from .tool_backends.registry import get_tool_backend
-from .core.audit import create_run, create_tool_call, persist_decision, update_tool_call_status
+from .core.audit import (
+    create_run,
+    create_tool_call,
+    persist_decision,
+    update_tool_call_result,
+    update_tool_call_status,
+)
 from .core.policy_engine import evaluate_tool_call
 from .core.policy_graph import get_citations_for_decision
 from .db.session import SessionLocal
@@ -262,6 +268,9 @@ class Mutation:
             else:
                 result_text = str(result_value)
 
+            update_tool_call_result(db, tool_call, result_text)
+            update_tool_call_status(db, tool_call, "EXECUTED")
+
             tool_calls.labels(tool=tool, decision="ALLOW").inc()
             decision_latency.observe((time.time() - start) * 1000)
 
@@ -295,7 +304,12 @@ class Mutation:
                 pass
 
     @strawberry.mutation
-    def approve_tool_call(self, tool_call_id: str, note: str | None = None) -> ToolDecision:
+    def approve_tool_call(
+        self,
+        tool_call_id: str,
+        note: str | None = None,
+        approved_by: str | None = None,
+    ) -> ToolDecision:
         db = SessionLocal()
         try:
             tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id).first()
@@ -330,6 +344,7 @@ class Mutation:
                 "APPROVED",
                 approved_at=datetime.now(timezone.utc),
                 approval_note=note,
+                approved_by=approved_by or "manual",
             )
             db.flush()
 
@@ -357,6 +372,8 @@ class Mutation:
                     reason_text = f"Tool call failed: {reason_text}"
                 result_text = None
                 decision_value = "BLOCK"
+
+            update_tool_call_result(db, tool_call, result_text)
 
             # Persist decision
             prior = get_decision_for_tool_call(db, tool_call.id)
@@ -394,7 +411,12 @@ class Mutation:
                 pass
 
     @strawberry.mutation
-    def deny_tool_call(self, tool_call_id: str, note: str | None = None) -> ToolDecision:
+    def deny_tool_call(
+        self,
+        tool_call_id: str,
+        note: str | None = None,
+        approved_by: str | None = None,
+    ) -> ToolDecision:
         db = SessionLocal()
         try:
             tool_call = db.query(DbToolCall).filter(DbToolCall.id == tool_call_id).first()
@@ -428,6 +450,7 @@ class Mutation:
                 "DENIED",
                 approved_at=datetime.now(timezone.utc),
                 approval_note=note,
+                approved_by=approved_by or "manual",
             )
             db.flush()
 
@@ -584,6 +607,7 @@ class Query:
                     args_redacted=tc.args_redacted,
                     created_at=tc.created_at,
                     status=tc.status,
+                    approved_by=getattr(tc, "approved_by", None),
                     approved_at=tc.approved_at,
                     approval_note=tc.approval_note,
                     decision=DecisionType(
@@ -649,6 +673,7 @@ class Query:
                     tool_name=tc.tool_name,
                     args_redacted=tc.args_redacted,
                     status=tc.status,
+                    approved_by=getattr(tc, "approved_by", None),
                     approved_at=tc.approved_at,
                     approval_note=tc.approval_note,
                     created_at=tc.created_at,

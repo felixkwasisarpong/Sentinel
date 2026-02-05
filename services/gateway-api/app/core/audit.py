@@ -63,3 +63,10 @@ def update_tool_call_status(
         tool_call.approved_by = approved_by
     db.add(tool_call)
     return tool_call
+
+
+def update_tool_call_result(db, tool_call: ToolCall, result: str | None) -> ToolCall:
+    if hasattr(tool_call, "result"):
+        tool_call.result = result
+    db.add(tool_call)
+    return tool_call

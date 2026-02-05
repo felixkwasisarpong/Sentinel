@@ -20,6 +20,7 @@ class ToolCallType:
     args_redacted: JSON
     decision: Optional[DecisionType]
     status: Optional[str]
+    approved_by: Optional[str]
     approved_at: Optional[datetime]
     approval_note: Optional[str]
     created_at: datetime
