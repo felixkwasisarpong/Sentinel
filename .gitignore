@@ -17,6 +17,8 @@ downloads/
 eggs/
 .eggs/
 lib/
+!ui/app/lib/
+!ui/app/lib/**
 lib64/
 parts/
 sdist/
@@ -211,4 +213,3 @@ __marimo__/
 key
 .DS_Store
 .DS_Store
-
