@@ -23,6 +23,7 @@ class ToolCallType:
     approved_by: Optional[str]
     approved_at: Optional[datetime]
     approval_note: Optional[str]
+    result: Optional[str]
     created_at: datetime
 
 

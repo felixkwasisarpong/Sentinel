@@ -620,6 +620,7 @@ class Query:
                     approved_by=getattr(tc, "approved_by", None),
                     approved_at=tc.approved_at,
                     approval_note=tc.approval_note,
+                    result=getattr(tc, "result", None),
                     decision=DecisionType(
                         decision=decision.decision,
                         reason=decision.reason,
@@ -686,6 +687,7 @@ class Query:
                     approved_by=getattr(tc, "approved_by", None),
                     approved_at=tc.approved_at,
                     approval_note=tc.approval_note,
+                    result=getattr(tc, "result", None),
                     created_at=tc.created_at,
                     decision=DecisionType(
                         decision=decision.decision,
