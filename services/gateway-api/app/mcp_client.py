@@ -17,6 +17,13 @@ def _build_tools_endpoint(base_url: str) -> str:
     return f"{base}/tools"
 
 
+def _build_jsonrpc_endpoint(base_url: str) -> str:
+    base = (base_url or "").rstrip("/")
+    if base.endswith("/tools"):
+        return base[: -len("/tools")]
+    return base
+
+
 def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict]:
     headers = {}
     db = SessionLocal()
@@ -45,3 +52,32 @@ def call_tool(tool: str, args: dict):
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | None = None) -> list[dict]:
+    endpoint = _build_jsonrpc_endpoint(base_url)
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if auth_header and auth_token:
+        headers[auth_header] = auth_token
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": "tools-list",
+        "method": "tools/list",
+        "params": {},
+    }
+    resp = requests.post(endpoint, json=payload, headers=headers, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if isinstance(data, dict):
+        result = data.get("result")
+        if isinstance(result, dict) and isinstance(result.get("tools"), list):
+            return result["tools"]
+        if isinstance(result, list):
+            return result
+
+    return []
