@@ -1,4 +1,6 @@
+import json
 import re
+import shlex
 
 from crewai import Agent, Task, Crew, Process
 from .crewai_tools import FSListDirTool, FSReadFileTool, FSWriteFileTool, propose_tool_decision
@@ -32,6 +34,53 @@ def _extract_write_content(task: str) -> str:
     return ""
 
 
+def _parse_kv_args(tokens: list[str]) -> dict:
+    args: dict = {}
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        v = value.strip()
+        if v.lower() in ("true", "false"):
+            args[key] = v.lower() == "true"
+            continue
+        try:
+            if "." in v:
+                args[key] = float(v)
+            else:
+                args[key] = int(v)
+            continue
+        except Exception:
+            pass
+        if (v.startswith("{") and v.endswith("}")) or (v.startswith("[") and v.endswith("]")):
+            try:
+                args[key] = json.loads(v)
+                continue
+            except Exception:
+                pass
+        args[key] = v
+    return args
+
+
+def _parse_gh_task(task: str) -> tuple[str, dict] | None:
+    t = (task or "").strip()
+    if not t.startswith("gh."):
+        return None
+    parts = shlex.split(t)
+    if not parts:
+        return None
+    tool = parts[0]
+    if len(parts) == 1:
+        return tool, {}
+    rest = " ".join(parts[1:]).strip()
+    if rest.startswith("{") and rest.endswith("}"):
+        try:
+            return tool, json.loads(rest)
+        except Exception:
+            return tool, {}
+    return tool, _parse_kv_args(parts[1:])
+
+
 def _select_tool(task: str) -> tuple[str, dict] | None:
     task_l = task.lower()
 
@@ -53,6 +102,27 @@ def _select_tool(task: str) -> tuple[str, dict] | None:
 
 
 def run_crewai(task: str) -> dict:
+    gh = _parse_gh_task(task)
+    if gh:
+        tool, args = gh
+        td = propose_tool_decision(tool, args, "investigator")
+        if td.get("decision") == "ALLOW":
+            tool_output = td.get("result")
+            rendered = f"Tool Output: {tool_output}\nCompleted."
+        else:
+            tool_output = f"[BLOCKED] {td.get('reason')}"
+            rendered = (
+                f"Tool Output: {tool_output}\n"
+                "I can't perform that action due to policy restrictions."
+            )
+
+        return {
+            "orchestrator": "crewai",
+            "task": task,
+            "result": rendered,
+            "tool_decision": td,
+        }
+
     forced = _select_tool(task)
     if forced:
         tool, args = forced

@@ -1,5 +1,7 @@
+import json
 import os
 import re
+import shlex
 import requests
 
 from .fsm_types import FSMState, FSMContext
@@ -72,6 +74,53 @@ def _normalize_sandbox_path(path: str | None) -> str | None:
     return None
 
 
+def _parse_kv_args(tokens: list[str]) -> dict:
+    args: dict = {}
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        v = value.strip()
+        if v.lower() in ("true", "false"):
+            args[key] = v.lower() == "true"
+            continue
+        try:
+            if "." in v:
+                args[key] = float(v)
+            else:
+                args[key] = int(v)
+            continue
+        except Exception:
+            pass
+        if (v.startswith("{") and v.endswith("}")) or (v.startswith("[") and v.endswith("]")):
+            try:
+                args[key] = json.loads(v)
+                continue
+            except Exception:
+                pass
+        args[key] = v
+    return args
+
+
+def _parse_gh_task(task: str) -> tuple[str, dict] | None:
+    t = (task or "").strip()
+    if not t.startswith("gh."):
+        return None
+    parts = shlex.split(t)
+    if not parts:
+        return None
+    tool = parts[0]
+    if len(parts) == 1:
+        return tool, {}
+    rest = " ".join(parts[1:]).strip()
+    if rest.startswith("{") and rest.endswith("}"):
+        try:
+            return tool, json.loads(rest)
+        except Exception:
+            return tool, {}
+    return tool, _parse_kv_args(parts[1:])
+
+
 class HybridFSM:
     """
     Hybrid FSM orchestrator:
@@ -126,6 +175,15 @@ class HybridFSM:
     def _plan(self) -> None:
         self.ctx.agent_role = "planner"
         task_l = (self.ctx.user_task or "").lower()
+
+        gh = _parse_gh_task(self.ctx.user_task)
+        if gh:
+            tool, args = gh
+            self.ctx.plan = f"Execute {tool}"
+            self.ctx.tool = tool
+            self.ctx.args = args
+            self.state = FSMState.PROPOSE_TOOL
+            return
 
         # LIST
         if "list" in task_l:
@@ -247,9 +305,13 @@ class HybridFSM:
             self.ctx.args = {
                 **(self.ctx.args or {}),
                 "path": raw if norm is None else norm,
-                "__orchestrator": self.ctx.orchestrator,
-                "__agent_role": self.ctx.agent_role,
             }
+
+        self.ctx.args = {
+            **(self.ctx.args or {}),
+            "__orchestrator": self.ctx.orchestrator,
+            "__agent_role": self.ctx.agent_role,
+        }
 
         payload = {
             "query": PROPOSE_MUTATION,

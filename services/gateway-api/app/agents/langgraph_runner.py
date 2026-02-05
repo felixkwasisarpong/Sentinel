@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import shlex
 import requests
 
 from langgraph.graph import StateGraph, END
@@ -49,6 +51,55 @@ def _extract_path(text: str) -> str | None:
         return None
     m = re.search(r'(/[^\s"\']+)', text)
     return m.group(1) if m else None
+
+
+def _parse_kv_args(tokens: list[str]) -> dict:
+    args: dict = {}
+    for token in tokens:
+        if "=" not in token:
+            continue
+        key, value = token.split("=", 1)
+        v = value.strip()
+        if v.lower() in ("true", "false"):
+            args[key] = v.lower() == "true"
+            continue
+        # int / float coercion
+        try:
+            if "." in v:
+                args[key] = float(v)
+            else:
+                args[key] = int(v)
+            continue
+        except Exception:
+            pass
+        # JSON object/array
+        if (v.startswith("{") and v.endswith("}")) or (v.startswith("[") and v.endswith("]")):
+            try:
+                args[key] = json.loads(v)
+                continue
+            except Exception:
+                pass
+        args[key] = v
+    return args
+
+
+def _parse_gh_task(task: str) -> tuple[str, dict] | None:
+    t = (task or "").strip()
+    if not t.startswith("gh."):
+        return None
+    parts = shlex.split(t)
+    if not parts:
+        return None
+    tool = parts[0]
+    if len(parts) == 1:
+        return tool, {}
+    rest = " ".join(parts[1:]).strip()
+    if rest.startswith("{") and rest.endswith("}"):
+        try:
+            return tool, json.loads(rest)
+        except Exception:
+            return tool, {}
+    return tool, _parse_kv_args(parts[1:])
 
 
 def _extract_write_content(text: str) -> str:
@@ -141,6 +192,48 @@ def tool_proposer_node(state: AgentState) -> AgentState:
 
     tool: str | None = None
     args: dict | None = None
+
+    # GitHub MCP direct tool invocation, e.g.:
+    #   gh.add_issue_comment owner=... repo=... issue_number=1 body="test"
+    gh = _parse_gh_task(task)
+    if gh:
+        tool, args = gh
+        args = {**args, "__orchestrator": "langgraph", "__agent_role": "single"}
+        payload = {
+            "query": PROPOSE_MUTATION,
+            "variables": {"tool": tool, "args": args},
+        }
+        try:
+            resp = requests.post(GATEWAY_GRAPHQL_URL, json=payload, timeout=10)
+            resp.raise_for_status()
+            body = resp.json()
+            data = body["data"]["proposeToolCall"]
+        except Exception as e:
+            tool_decision = {
+                "tool_call_id": "n/a",
+                "decision": "BLOCK",
+                "reason": f"gateway request failed: {e}",
+                "result": None,
+                "policy_citations": [],
+                "incident_refs": [],
+                "control_refs": [],
+            }
+            return {**state, "tool_result": f"[ERROR] gateway request failed: {e}", "tool_decision": tool_decision}
+
+        tool_decision = {
+            "tool_call_id": data.get("toolCallId", "n/a"),
+            "decision": data.get("decision"),
+            "reason": data.get("reason"),
+            "result": data.get("result"),
+            "policy_citations": data.get("policyCitations") or [],
+            "incident_refs": data.get("incidentRefs") or [],
+            "control_refs": data.get("controlRefs") or [],
+        }
+
+        if data["decision"] != "ALLOW":
+            return {**state, "tool_result": f"[BLOCKED] {data['reason']}", "tool_decision": tool_decision}
+
+        return {**state, "tool_result": data.get("result"), "tool_decision": tool_decision}
 
     # Prefer plan tool selection, fall back to task keywords.
     if "fs.list_dir" in plan_l or ("list" in task.lower() and "file" in task.lower()):
