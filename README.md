@@ -109,7 +109,7 @@ Some tool actions are safe to execute automatically (e.g., listing files in `/sa
 Senteniel supports a third decision state:
 - `APPROVAL_REQUIRED` — the tool call is **captured + persisted**, but **not executed** until a human approves it.
 
-**MVP implemented today:** `fs.write_file` is governed as approval‑required.
+**MVP implemented today:** `fs.write_file` (and GitHub write actions when prefix rules are configured) are governed as approval‑required.
 
 **Example output (approval required):**
 
@@ -127,11 +127,10 @@ Senteniel supports a third decision state:
 }
 ```
 
-**Audit status transitions:**
+**Audit status transitions (implemented):**
 - `PENDING` → `APPROVED` → `EXECUTED` (after reviewer approval)
 - `PENDING` → `DENIED` (never executed)
-
-> Note: the approval queue + approve/deny mutations are the next UI/API layer on top of this persisted state.
+> Approval queue + approve/deny mutations are available in the GraphQL API and UI.
 
 ### 🧠 Orchestrator Leaderboard (3‑way)
 Senteniel runs the **same governed tool calls** through three orchestration strategies:
@@ -250,6 +249,54 @@ Senteniel runs the **same governed tool calls** through three orchestration stra
   - `P-SANDBOX-001` (read outside sandbox → BLOCK)
   - `P-SANDBOX-ALLOWLIST-001` (list_dir under sandbox → ALLOW)
   - `C-SANDBOX-BOUNDARY`, `I-EXFIL-001`
+
+---
+
+## 🔌 MCP Registry + Remote MCPs (GitHub)
+
+Senteniel supports **plug‑and‑play MCP servers** via a registry:
+- Register a server (base URL + tool prefix + auth)
+- Sync tools (for discovery/UI)
+- Route calls by tool prefix (`fs.` → sandbox, `gh.` → GitHub)
+
+**Register GitHub MCP (all tools):**
+```graphql
+mutation {
+  registerMcpServer(
+    name: "github"
+    baseUrl: "https://api.githubcopilot.com/mcp/x/all"
+    toolPrefix: "gh."
+    authHeader: "Authorization"
+    authToken: "Bearer <YOUR_GITHUB_TOKEN>"
+  ) {
+    name
+    baseUrl
+    toolPrefix
+  }
+}
+```
+
+**Sync tools:**
+```graphql
+mutation {
+  syncMcpTools(serverName: "github") {
+    serverName
+    toolCount
+  }
+}
+```
+
+**List tools:**
+```graphql
+query {
+  mcpTools(serverName: "github") {
+    name
+    description
+  }
+}
+```
+
+> For sandbox, syncing is not required; the gateway calls `/tools` directly.
 
 ---
 
@@ -401,26 +448,42 @@ docker compose ps
 
 #### LangGraph
 ```bash
-curl "http://localhost:8000/agent/run?task=list files"
-curl "http://localhost:8000/agent/run?task=read /etc/passwd"
+curl -X POST "http://localhost:8000/agent/run?task=list%20files"
+curl -X POST "http://localhost:8000/agent/run?task=read%20/etc/passwd"
 ```
 
 #### CrewAI
 ```bash
-curl "http://localhost:8000/agent/crew/run?task=list files"
-curl "http://localhost:8000/agent/crew/run?task=read /etc/passwd"
+curl -X POST "http://localhost:8000/agent/run?orchestrator=crewai&task=list%20files"
+curl -X POST "http://localhost:8000/agent/run?orchestrator=crewai&task=read%20/etc/passwd"
 ```
 
 #### Hybrid FSM
 ```bash
-curl "http://localhost:8000/agent/fsm/run?task=list files"
-curl "http://localhost:8000/agent/fsm/run?task=read /etc/passwd"
+curl -X POST "http://localhost:8000/agent/run?orchestrator=fsm&task=list%20files"
+curl -X POST "http://localhost:8000/agent/run?orchestrator=fsm&task=read%20/etc/passwd"
+```
+
+#### Plain‑English GitHub (no `gh.*` required)
+```bash
+curl -X POST "http://localhost:8000/agent/run?task=comment%20%22LGTM%22%20on%20issue%2039%20in%20felixkwasisarpong/Sentinel"
+curl -X POST "http://localhost:8000/agent/run?task=list%20issues%20in%20felixkwasisarpong/Sentinel"
+```
+> Requires the GitHub MCP server to be registered and synced.
+
+#### Direct tool call (advanced)
+```bash
+curl -X POST "http://localhost:8000/agent/run?task=gh.add_issue_comment%20owner=felixkwasisarpong%20repo=Sentinel%20issue_number=39%20body=%22test%22"
 ```
 
 ### Environment notes
 - Inside Docker, set `GATEWAY_GRAPHQL_URL` to the service DNS if needed (e.g., `http://gateway-api:8000/graphql`).
 - If using Ollama for local LLM planning/summaries, set `OLLAMA_BASE_URL=http://ollama:11434`.
 - LangGraph includes a deterministic fallback when the LLM is unreachable (no crashes).
+- Optional GitHub defaults for plain‑English tasks:
+  - `GITHUB_OWNER=felixkwasisarpong`
+  - `GITHUB_REPO=Sentinel`
+- Policy prefix rules can be set via `POLICY_PREFIX_RULES` (JSON map of prefix → decision/risk/reason).
 
 ---
 
@@ -466,7 +529,7 @@ Senteniel provides a web UI for **security, platform, and infra teams**:
 ### 🚧 Phase 2 — GraphRAG Proof Mode
 - ✅ Neo4j citations are working for both ALLOW and BLOCK
 - ✅ Approval‑required policy for write actions (APPROVAL_REQUIRED) — MVP implemented for fs.write_file
-- Next: approval queue + approve/deny workflow in GraphQL/UI
+- ✅ Approval queue + approve/deny workflow in GraphQL/UI
 
 ### 🚧 Phase 3 — Evaluation Harness (next)
 - Task suite (`eval/tasks.jsonl`) covering utility + safety cases
