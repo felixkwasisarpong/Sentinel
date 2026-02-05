@@ -71,6 +71,21 @@ def _parse_jsonrpc_response(resp: requests.Response) -> dict:
         raise
 
 
+def _jsonrpc_error_message(data: dict) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    err = data.get("error")
+    if not err:
+        return None
+    if isinstance(err, dict):
+        msg = err.get("message") or err.get("error") or "Unknown MCP error"
+        details = err.get("data")
+        if details:
+            return f"{msg} ({details})"
+        return msg
+    return str(err)
+
+
 def call_tool(tool: str, args: dict):
     base_url, headers, prefix, jsonrpc = _resolve_mcp_endpoint(tool)
     tool_name = tool
@@ -92,6 +107,9 @@ def call_tool(tool: str, args: dict):
         )
         resp.raise_for_status()
         data = _parse_jsonrpc_response(resp)
+        err = _jsonrpc_error_message(data)
+        if err:
+            raise requests.RequestException(f"MCP error: {err}")
         result = data.get("result")
         # Normalize to match MCP /tools shape
         if isinstance(result, dict) and "content" in result:
@@ -99,7 +117,13 @@ def call_tool(tool: str, args: dict):
             if isinstance(content, list) and content:
                 item = content[0]
                 if isinstance(item, dict) and item.get("type") == "text":
-                    return {"result": item.get("text", "")}
+                    text = item.get("text", "")
+                    if isinstance(text, str) and text.strip().startswith(("{", "[")):
+                        try:
+                            return {"result": json.loads(text)}
+                        except Exception:
+                            pass
+                    return {"result": text}
         return {"result": result}
 
     endpoint = _build_tools_endpoint(base_url)
@@ -141,6 +165,9 @@ def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | 
             data = _post(f"{endpoint}/")
         else:
             raise exc
+    err = _jsonrpc_error_message(data)
+    if err:
+        raise requests.RequestException(f"MCP error: {err}")
 
     if isinstance(data, dict):
         result = data.get("result")
