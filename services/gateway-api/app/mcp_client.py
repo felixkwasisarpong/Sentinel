@@ -25,7 +25,7 @@ def _build_jsonrpc_endpoint(base_url: str) -> str:
     return base
 
 
-def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict]:
+def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict, str | None]:
     headers = {}
     db = SessionLocal()
     try:
@@ -33,21 +33,24 @@ def _resolve_mcp_endpoint(tool: str) -> tuple[str, dict]:
         if server:
             if server.auth_header and server.auth_token:
                 headers[server.auth_header] = server.auth_token
-            return _build_tools_endpoint(server.base_url), headers
+            return _build_tools_endpoint(server.base_url), headers, server.tool_prefix
     finally:
         try:
             db.close()
         except Exception:
             pass
 
-    return _build_tools_endpoint(DEFAULT_MCP_URL), headers
+    return _build_tools_endpoint(DEFAULT_MCP_URL), headers, None
 
 
 def call_tool(tool: str, args: dict):
-    endpoint, headers = _resolve_mcp_endpoint(tool)
+    endpoint, headers, prefix = _resolve_mcp_endpoint(tool)
+    tool_name = tool
+    if prefix and tool_name.startswith(prefix):
+        tool_name = tool_name[len(prefix):]
     resp = requests.post(
         endpoint,
-        json={"tool": tool, "args": args},
+        json={"tool": tool_name, "args": args},
         headers=headers,
         timeout=5,
     )
