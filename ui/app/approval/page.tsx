@@ -27,9 +27,11 @@ type PendingApproval = {
   toolName: string;
   createdAt: string;
   status: string;
+  approvedBy: string | null;
   approvedAt: string | null;
   approvalNote: string | null;
   argsRedacted: any;
+  result: string | null;
   decision: Decision | null;
 };
 
@@ -66,9 +68,11 @@ query PendingApprovals($limit: Int!) {
     toolName
     createdAt
     status
+    approvedBy
     approvedAt
     approvalNote
     argsRedacted
+    result
     decision {
       decision
       reason
@@ -353,6 +357,28 @@ export default function ApprovalsPage() {
                         </summary>
                         <pre className="mt-2 overflow-auto rounded-lg border border-white/10 bg-black/40 p-3 text-[11px] text-white/70">
                           {JSON.stringify(it.argsRedacted ?? {}, null, 2)}
+                        </pre>
+                      </details>
+
+                      <div className="mt-4 grid gap-3 text-xs text-white/60 sm:grid-cols-2">
+                        <div>
+                          <div className="text-xs uppercase tracking-[0.2em] text-white/40">Approved By</div>
+                          <div className="mt-1 text-white/80">{it.approvedBy || "—"}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs uppercase tracking-[0.2em] text-white/40">Approved At</div>
+                          <div className="mt-1 text-white/80">
+                            {it.approvedAt ? formatTime(it.approvedAt) : "—"}
+                          </div>
+                        </div>
+                      </div>
+
+                      <details className="mt-4 text-xs text-white/60">
+                        <summary className="cursor-pointer select-none text-white/70">
+                          View tool result
+                        </summary>
+                        <pre className="mt-2 overflow-auto rounded-lg border border-white/10 bg-black/40 p-3 text-[11px] text-white/70">
+                          {it.result ?? "—"}
                         </pre>
                       </details>
                     </div>
