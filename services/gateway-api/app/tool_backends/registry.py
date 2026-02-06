@@ -4,6 +4,7 @@ import os
 
 from .base import ToolBackend
 from .mcp_http import McpHttpBackend
+from .mcp_stdio import McpStdioBackend
 from .mock import MockBackend
 
 
@@ -13,6 +14,8 @@ def get_tool_backend() -> ToolBackend:
 
     if backend in ("mcp_http", "mcp", "http"):
         return McpHttpBackend(base_url=base_url)
+    if backend in ("mcp_stdio", "stdio", "mcp_gateway", "gateway"):
+        return McpStdioBackend()
     if backend in ("mock", "fake", "eval"):
         return MockBackend()
 

@@ -1,3 +1,4 @@
+import os
 import strawberry
 import time
 import json
@@ -108,6 +109,7 @@ class Mutation:
         tool_call_id = "n/a"
 
         try:
+            _ensure_stdio_tools_synced(db)
             # Accept JSON as a string from GraphQL and parse it into a dict
             try:
                 parsed_args = json.loads(args) if isinstance(args, str) else args
@@ -549,11 +551,28 @@ class Mutation:
     def sync_mcp_tools(self, server_name: str) -> MCPSyncResult:
         db = SessionLocal()
         try:
+            tool_backend = get_tool_backend()
             server = get_mcp_server_by_name(db, server_name)
+            if not server and getattr(tool_backend, "name", "") == "mcp_stdio":
+                placeholder_base = os.getenv("MCP_STDIO_PLACEHOLDER_URL", "http://docker-mcp-gateway:7001")
+                placeholder_base = validate_mcp_base_url(placeholder_base)
+                placeholder_prefix = os.getenv("MCP_DEFAULT_PREFIX", "mcp.")
+                server = MCPServer(
+                    name=server_name,
+                    base_url=placeholder_base,
+                    tool_prefix=placeholder_prefix,
+                )
+                db.add(server)
+                db.commit()
+                db.refresh(server)
+
             if not server:
                 raise ValueError(f"MCP server not found: {server_name}")
 
-            tools = list_tools(server.base_url, server.auth_header, server.auth_token)
+            if hasattr(tool_backend, "list_tools"):
+                tools = tool_backend.list_tools()
+            else:
+                tools = list_tools(server.base_url, server.auth_header, server.auth_token)
             count = replace_mcp_tools(db, server.id, tools)
             db.commit()
             return MCPSyncResult(server_name=server.name, tool_count=count)
@@ -572,6 +591,44 @@ def _resolve_citations(decision: Decision | None, tool_name: str) -> tuple[list[
         return policies, incidents, controls
 
     return get_citations_for_decision(tool_name)
+
+
+def _env_truthy(value: str | None, default: bool = True) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _ensure_stdio_tools_synced(db: SessionLocal) -> None:
+    if not _env_truthy(os.getenv("MCP_STDIO_AUTO_SYNC"), default=True):
+        return
+    tool_backend = get_tool_backend()
+    if getattr(tool_backend, "name", "") != "mcp_stdio":
+        return
+
+    server_name = os.getenv("MCP_STDIO_SERVER_NAME", "gateway")
+    server = get_mcp_server_by_name(db, server_name)
+    if not server:
+        placeholder_base = os.getenv("MCP_STDIO_PLACEHOLDER_URL", "http://docker-mcp-gateway:7001")
+        placeholder_base = validate_mcp_base_url(placeholder_base)
+        placeholder_prefix = os.getenv("MCP_DEFAULT_PREFIX", "mcp.")
+        server = MCPServer(
+            name=server_name,
+            base_url=placeholder_base,
+            tool_prefix=placeholder_prefix,
+        )
+        db.add(server)
+        db.commit()
+        db.refresh(server)
+
+    existing = get_mcp_tools_for_server(db, server.id)
+    if existing:
+        return
+
+    if hasattr(tool_backend, "list_tools"):
+        tools = tool_backend.list_tools()
+        replace_mcp_tools(db, server.id, tools)
+        db.commit()
 
 
 @strawberry.type

@@ -36,6 +36,7 @@ Senteniel answers: *Should this tool call be allowed — and can we prove why?*
 
 **Pluggable tool execution**
 - `mcp_http` (default)
+- `mcp_stdio` (Docker MCP Gateway over stdio)
 - `mock` (eval/testing)
 
 **Hard boundaries**
@@ -104,7 +105,7 @@ mutation {
 Sync tools:
 ```graphql
 mutation {
-  syncMcpTools(serverName: "github") {
+  syncMcpTools(serverName: "sandbox") {
     serverName
     toolCount
   }
@@ -113,11 +114,45 @@ mutation {
 
 ---
 
+## Docker MCP Gateway (stdio)
+
+If you want to use Docker MCP Toolkit's gateway (stdio), set:
+
+```
+TOOL_BACKEND=mcp_stdio
+MCP_STDIO_CMD="docker mcp gateway run"
+```
+
+Then enable MCP servers in Docker Desktop (MCP Toolkit). Senteniel will invoke
+`docker mcp gateway run` and send MCP JSON-RPC over stdin/stdout.
+
+Note: the `docker mcp` command must be available where `gateway-api` runs
+(host process or container with Docker CLI + MCP plugin).
+
+To sync tools into Senteniel while using stdio, call:
+```graphql
+mutation {
+  syncMcpTools(serverName: "gateway") {
+    serverName
+    toolCount
+  }
+}
+```
+If the server does not exist yet, Senteniel will create a placeholder record
+named "gateway" using `MCP_DEFAULT_PREFIX` (default `mcp.`) and
+`MCP_STDIO_PLACEHOLDER_URL` for display.
+
+---
+
 ## Environment Variables
 
 - `ORCHESTRATOR=langgraph`
 - `TOOL_BACKEND=mcp_http`
 - `MCP_BASE_URL=http://mcp-sandbox:7001` (Docker service hostname only)
+- `MCP_STDIO_CMD="docker mcp gateway run"` (when `TOOL_BACKEND=mcp_stdio`)
+- `MCP_STDIO_PLACEHOLDER_URL=http://docker-mcp-gateway:7001` (optional display-only)
+- `MCP_STDIO_AUTO_SYNC=true` (default; sync tools on first tool call)
+- `MCP_STDIO_SERVER_NAME=gateway` (placeholder MCP server name)
 - `GATEWAY_GRAPHQL_URL=http://gateway-api:8000/graphql`
 - `POLICY_PREFIX_RULES` (JSON map: prefix → decision/risk/reason)
 - Optional GitHub defaults:
