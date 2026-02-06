@@ -213,3 +213,4 @@ __marimo__/
 key
 .DS_Store
 .DS_Store
+services/gateway-api/test_gateway_api.db

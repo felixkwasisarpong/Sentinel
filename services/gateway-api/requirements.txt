@@ -16,3 +16,4 @@ apscheduler
 fastapi-sso
 alembic>=1.12
 neo4j
+pytest
