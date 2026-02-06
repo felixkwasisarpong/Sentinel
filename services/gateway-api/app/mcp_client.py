@@ -1,5 +1,6 @@
 import os
 import json
+import ipaddress
 import requests
 from urllib.parse import urlparse
 
@@ -9,6 +10,40 @@ from .db.queries import get_mcp_server_for_tool
 
 def _default_mcp_url() -> str:
     return os.getenv("MCP_BASE_URL") or os.getenv("MCP_URL", "http://mcp-sandbox:7001")
+
+
+_DOCKER_ONLY_ERROR = (
+    "MCP base URL must point to a docker-hosted service "
+    "(e.g. http://mcp-sandbox:7001). External domains, localhost, "
+    "and IP addresses are not allowed."
+)
+
+
+def _is_docker_hostname(host: str) -> bool:
+    if not host:
+        return False
+    host = host.strip().lower()
+    if host in ("localhost",):
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    return "." not in host
+
+
+def validate_mcp_base_url(base_url: str) -> str:
+    base_url = (base_url or "").strip()
+    if not base_url:
+        raise ValueError("MCP base URL is required.")
+    parsed = urlparse(base_url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(_DOCKER_ONLY_ERROR)
+    host = parsed.hostname or ""
+    if not _is_docker_hostname(host):
+        raise ValueError(_DOCKER_ONLY_ERROR)
+    return base_url
 
 
 def _path_is_mcp(base_url: str) -> bool:
@@ -27,7 +62,7 @@ def _build_tools_endpoint(base_url: str) -> str:
         path = ""
     if path.endswith("/tools"):
         return base
-    # Remote MCPs may expose toolsets directly under /mcp/... paths.
+    # Some MCPs may expose toolsets directly under /mcp/... paths.
     if path.startswith("/mcp"):
         return base
     return f"{base}/tools"
@@ -52,6 +87,7 @@ def _resolve_mcp_endpoint(tool: str, base_url_override: str | None = None) -> tu
         if server:
             if server.auth_header and server.auth_token:
                 headers[server.auth_header] = server.auth_token
+            validate_mcp_base_url(server.base_url)
             return server.base_url, headers, server.tool_prefix, _uses_jsonrpc(server.base_url)
     finally:
         try:
@@ -60,6 +96,7 @@ def _resolve_mcp_endpoint(tool: str, base_url_override: str | None = None) -> tu
             pass
 
     base_url = base_url_override or _default_mcp_url()
+    validate_mcp_base_url(base_url)
     return base_url, headers, None, _uses_jsonrpc(base_url)
 
 
@@ -154,6 +191,7 @@ def call_tool(tool: str, args: dict, *, base_url: str | None = None):
 
 
 def list_tools(base_url: str, auth_header: str | None = None, auth_token: str | None = None) -> list[dict]:
+    validate_mcp_base_url(base_url)
     endpoint = _build_jsonrpc_endpoint(base_url)
     headers = {
         "Content-Type": "application/json",

@@ -81,17 +81,18 @@ curl -X POST "http://localhost:8000/agent/run?orchestrator=fsm&task=list%20files
 
 ---
 
-## MCP Registry (GitHub example)
+## MCP Registry (Docker example)
+
+Only Docker-hosted MCP servers are supported. Base URLs must use the Docker
+service hostname (no dots, no localhost, no IPs).
 
 Register MCP server:
 ```graphql
 mutation {
   registerMcpServer(
-    name: "github"
-    baseUrl: "https://api.githubcopilot.com/mcp/x/all"
-    toolPrefix: "gh."
-    authHeader: "Authorization"
-    authToken: "Bearer <YOUR_GITHUB_TOKEN>"
+    name: "sandbox"
+    baseUrl: "http://mcp-sandbox:7001"
+    toolPrefix: "fs."
   ) {
     name
     baseUrl
@@ -116,7 +117,7 @@ mutation {
 
 - `ORCHESTRATOR=langgraph`
 - `TOOL_BACKEND=mcp_http`
-- `MCP_BASE_URL=http://mcp-sandbox:7001`
+- `MCP_BASE_URL=http://mcp-sandbox:7001` (Docker service hostname only)
 - `GATEWAY_GRAPHQL_URL=http://gateway-api:8000/graphql`
 - `POLICY_PREFIX_RULES` (JSON map: prefix → decision/risk/reason)
 - Optional GitHub defaults:
