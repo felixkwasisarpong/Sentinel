@@ -132,6 +132,13 @@ Senteniel supports a third decision state:
 - `PENDING` → `DENIED` (never executed)
 > Approval queue + approve/deny mutations are available in the GraphQL API and UI.
 
+### 🔁 Pluggable Orchestrators + Tool Backends
+- Orchestrators are swappable: **LangGraph**, **CrewAI**, **Hybrid FSM**
+- Tool execution is adapter‑based:
+  - `mcp_http` (default)
+  - `mock` (eval/testing)
+- A single ToolDecision contract is enforced across all orchestrators.
+
 ### 🧠 Orchestrator Leaderboard (3‑way)
 Senteniel runs the **same governed tool calls** through three orchestration strategies:
 
@@ -307,6 +314,8 @@ Every tool proposal produces a durable record:
 - policy citations
 - risk score
 - redacted tool arguments
+- tool result (when executed)
+- approval metadata (`approved_by`, `approved_at`, `approval_note`)
 - **audit-grade BLOCK attempts** (even out-of-sandbox requests are persisted with a real tool_call_id)
 - timestamps
 
@@ -420,6 +429,24 @@ Tool calls also track approval workflow state (PENDING/APPROVED/DENIED/EXECUTED)
 
 ---
 
+## 🧩 SDK (Python)
+
+Thin client for the GraphQL control plane.
+
+```bash
+pip install -e sdk
+```
+
+```python
+from sentinel_sdk import SentinelClient
+
+client = SentinelClient("http://localhost:8000/graphql")
+decision = client.propose_tool_call("fs.list_dir", {"path": "/sandbox"})
+approved = client.approve_tool_call(decision.tool_call_id, note="ok", approved_by="alice")
+```
+
+---
+
 ## 🚀 Quickstart (Docker Compose)
 
 ### 1) Start services
@@ -478,12 +505,25 @@ curl -X POST "http://localhost:8000/agent/run?task=gh.add_issue_comment%20owner=
 
 ### Environment notes
 - Inside Docker, set `GATEWAY_GRAPHQL_URL` to the service DNS if needed (e.g., `http://gateway-api:8000/graphql`).
+- Optional control plane defaults:
+  - `ORCHESTRATOR=langgraph`
+  - `TOOL_BACKEND=mcp_http`
+  - `MCP_BASE_URL=http://mcp-sandbox:7001`
 - If using Ollama for local LLM planning/summaries, set `OLLAMA_BASE_URL=http://ollama:11434`.
 - LangGraph includes a deterministic fallback when the LLM is unreachable (no crashes).
 - Optional GitHub defaults for plain‑English tasks:
   - `GITHUB_OWNER=felixkwasisarpong`
   - `GITHUB_REPO=Sentinel`
 - Policy prefix rules can be set via `POLICY_PREFIX_RULES` (JSON map of prefix → decision/risk/reason).
+
+---
+
+## ✅ Tests
+
+```bash
+cd services/gateway-api
+pytest -q
+```
 
 ---
 
