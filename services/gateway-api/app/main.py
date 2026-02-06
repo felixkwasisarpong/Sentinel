@@ -8,6 +8,7 @@ from .graphql_schema import schema
 from .db.base import Base
 from .db.session import engine, SessionLocal
 from .db.models import MCPServer
+from .mcp_client import validate_mcp_base_url
 from .orchestrators.registry import get_orchestrator
 
 app = FastAPI(title="Senteniel Gateway")
@@ -38,6 +39,7 @@ def _normalize_mcp_base(url: str) -> str:
 
 def ensure_default_mcp_server() -> None:
     base_url = _normalize_mcp_base(os.getenv("MCP_BASE_URL") or os.getenv("MCP_URL", "http://mcp-sandbox:7001"))
+    base_url = validate_mcp_base_url(base_url)
     name = os.getenv("MCP_DEFAULT_NAME", "sandbox")
     prefix = os.getenv("MCP_DEFAULT_PREFIX", "fs.")
 

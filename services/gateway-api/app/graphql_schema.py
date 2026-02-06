@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 from datetime import datetime, timezone
 
-from .mcp_client import list_tools
+from .mcp_client import list_tools, validate_mcp_base_url
 from .metrics import tool_calls, decision_latency
 from .tool_backends.registry import get_tool_backend
 from .core.audit import (
@@ -499,6 +499,7 @@ class Mutation:
     ) -> MCPServerType:
         db = SessionLocal()
         try:
+            base_url = validate_mcp_base_url(base_url)
             existing = (
                 db.query(MCPServer)
                 .filter((MCPServer.name == name) | (MCPServer.tool_prefix == tool_prefix))
