@@ -1,16 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 from typing import Any
-
-from autogen_agentchat.agents import AssistantAgent
-from autogen_ext.models.openai import OpenAIChatCompletionClient
-
-try:
-    from autogen_core.models import ModelFamily
-except Exception:  # pragma: no cover - fallback for older autogen versions
-    ModelFamily = None
 
 from .crewai_runner import _parse_gh_task, _parse_gh_english_task, _select_tool
 from .crewai_tools import propose_tool_decision
@@ -26,6 +19,32 @@ def _env(name: str, default: str) -> str:
 def _set_last_tool_decision(td: dict | None) -> None:
     global _LAST_TOOL_DECISION
     _LAST_TOOL_DECISION = td
+
+
+def _load_autogen_runtime() -> tuple[Any, Any, Any]:
+    """
+    Lazy-load AutoGen deps so gateway startup does not crash when optional deps
+    are missing in the image. We only need these imports when autogen is used.
+    """
+    try:
+        agent_mod = importlib.import_module("autogen_agentchat.agents")
+        ext_mod = importlib.import_module("autogen_ext.models.openai")
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "AutoGen dependencies are missing. Install `autogen-agentchat` and "
+            "`autogen-ext[openai]`, then rebuild gateway-api."
+        ) from exc
+
+    model_family = None
+    try:
+        core_mod = importlib.import_module("autogen_core.models")
+        model_family = getattr(core_mod, "ModelFamily", None)
+    except Exception:
+        model_family = None
+
+    assistant_agent = getattr(agent_mod, "AssistantAgent")
+    openai_client = getattr(ext_mod, "OpenAIChatCompletionClient")
+    return assistant_agent, openai_client, model_family
 
 
 def _call_tool(tool: str, args: dict, agent_role: str = "autogen") -> str:
@@ -56,7 +75,8 @@ async def fs_write_file(path: str, content: str) -> str:
     return _call_tool("fs.write_file", {"path": path, "content": content}, "autogen")
 
 
-def _build_model_client() -> OpenAIChatCompletionClient:
+def _build_model_client() -> Any:
+    _, openai_client_cls, model_family_cls = _load_autogen_runtime()
     api_base = _env("OPENAI_API_BASE", "")
     if not api_base:
         ollama_base = _env("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
@@ -71,8 +91,12 @@ def _build_model_client() -> OpenAIChatCompletionClient:
         "base_url": api_base,
     }
 
-    if ModelFamily:
-        family = getattr(ModelFamily, "UNKNOWN", None) or getattr(ModelFamily, "R1", None) or "unknown"
+    if model_family_cls:
+        family = (
+            getattr(model_family_cls, "UNKNOWN", None)
+            or getattr(model_family_cls, "R1", None)
+            or "unknown"
+        )
     else:
         family = "unknown"
     model_info = {
@@ -85,7 +109,7 @@ def _build_model_client() -> OpenAIChatCompletionClient:
     kwargs["model_info"] = model_info
 
     try:
-        return OpenAIChatCompletionClient(**kwargs)
+        return openai_client_cls(**kwargs)
     except TypeError:
         # Fallback for older autogen versions that accept model_capabilities.
         kwargs.pop("model_info", None)
@@ -94,7 +118,7 @@ def _build_model_client() -> OpenAIChatCompletionClient:
             "function_calling": True,
             "json_output": False,
         }
-        return OpenAIChatCompletionClient(**kwargs)
+        return openai_client_cls(**kwargs)
 
 
 def _final_text_from_result(result: Any) -> str:
@@ -111,7 +135,8 @@ def _final_text_from_result(result: Any) -> str:
 async def _run_autogen_async(task: str) -> dict:
     _set_last_tool_decision(None)
     client = _build_model_client()
-    agent = AssistantAgent(
+    assistant_agent_cls, _, _ = _load_autogen_runtime()
+    agent = assistant_agent_cls(
         name="autogen",
         model_client=client,
         system_message=(
