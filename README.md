@@ -31,7 +31,7 @@ Senteniel answers: *Should this tool call be allowed — and can we prove why?*
 - Centralized policy, approvals, and audit
 
 **Pluggable orchestration**
-- LangGraph, CrewAI, Hybrid FSM
+- LangGraph, CrewAI, AutoGen
 - Same tools + same policy + same boundary for fair evaluation
 
 **Pluggable tool execution**
@@ -77,7 +77,7 @@ Try orchestrators:
 ```bash
 curl -X POST "http://localhost:8000/agent/run?task=list%20files"
 curl -X POST "http://localhost:8000/agent/run?orchestrator=crewai&task=list%20files"
-curl -X POST "http://localhost:8000/agent/run?orchestrator=fsm&task=list%20files"
+curl -X POST "http://localhost:8000/agent/run?orchestrator=autogen&task=list%20files"
 ```
 
 ---
