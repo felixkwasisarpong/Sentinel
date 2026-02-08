@@ -574,6 +574,7 @@ class Mutation:
                 tools = tool_backend.list_tools()
                 if getattr(tool_backend, "name", "") == "mcp_stdio":
                     tools = _filter_stdio_tools_for_server(server_name, tools, server=server)
+                    tools = _namespace_stdio_tools_for_server(server, tools)
             else:
                 tools = list_tools(server.base_url, server.auth_header, server.auth_token)
             count = replace_mcp_tools(db, server.id, tools)
@@ -655,16 +656,6 @@ def _filter_stdio_tools_for_server(server_name: str, tools: list[dict], server: 
     markers = markers_map.get(server_name) or markers_map.get("*") or []
     explicit = bool(markers)
 
-    # If user registered a non-default prefix for this logical server, use it as a marker too.
-    if server and isinstance(server.tool_prefix, str) and server.tool_prefix.strip():
-        prefix = server.tool_prefix.strip()
-        if prefix == "mcp." and not explicit:
-            # default placeholder prefix is too broad; ignore it for filtering.
-            pass
-        else:
-            markers.append(prefix)
-            markers.append(prefix.rstrip("."))
-
     # Dynamic fallback for user-added MCP servers in stdio mode.
     if not markers:
         if server_name in ("gateway", os.getenv("MCP_STDIO_SERVER_NAME", "gateway")):
@@ -682,9 +673,21 @@ def _filter_stdio_tools_for_server(server_name: str, tools: list[dict], server: 
         name = str(tool.get("name") or "")
         if not name:
             continue
-        # Marker can be exact tool name or a prefix.
-        if any(name == m or name.startswith(m) for m in markers):
+        description = str(tool.get("description") or "")
+        annotations = tool.get("annotations")
+        title = ""
+        if isinstance(annotations, dict):
+            title = str(annotations.get("title") or "")
+        searchable = f"{name} {description} {title}".lower()
+        # Marker can be exact tool name, prefix, or metadata token.
+        if any(name == m or name.startswith(m) or m.lower() in searchable for m in markers):
             filtered.append(tool)
+
+    # If no explicit mapping was provided and dynamic matching found nothing,
+    # return full catalog so newly-added servers still remain usable.
+    if not filtered and not explicit:
+        return tools
+
     return filtered
 
 
@@ -707,6 +710,25 @@ def _stdio_server_prefix(server_name: str) -> str:
     if not slug:
         slug = "gateway"
     return f"{slug}."
+
+
+def _namespace_stdio_tools_for_server(server: MCPServer, tools: list[dict]) -> list[dict]:
+    prefix = (server.tool_prefix or _stdio_server_prefix(server.name)).strip()
+    if not prefix.endswith("."):
+        prefix = f"{prefix}."
+
+    namespaced: list[dict] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        raw_name = str(tool.get("name") or "").strip()
+        if not raw_name:
+            continue
+        wrapped = dict(tool)
+        wrapped["x-senteniel-raw-name"] = raw_name
+        wrapped["name"] = raw_name if raw_name.startswith(prefix) else f"{prefix}{raw_name}"
+        namespaced.append(wrapped)
+    return namespaced
 
 
 def _ensure_stdio_tools_synced(db: SessionLocal) -> None:
@@ -737,6 +759,7 @@ def _ensure_stdio_tools_synced(db: SessionLocal) -> None:
 
     if hasattr(tool_backend, "list_tools"):
         tools = _filter_stdio_tools_for_server(server_name, tool_backend.list_tools(), server=server)
+        tools = _namespace_stdio_tools_for_server(server, tools)
         replace_mcp_tools(db, server.id, tools)
         db.commit()
 
