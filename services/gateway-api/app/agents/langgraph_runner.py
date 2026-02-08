@@ -85,6 +85,43 @@ def _parse_kv_args(tokens: list[str]) -> dict:
     return args
 
 
+def _looks_like_explicit_tool_name(name: str) -> bool:
+    if not name or "." not in name:
+        return False
+    if name.startswith(".") or name.endswith("."):
+        return False
+    return True
+
+
+def _parse_explicit_tool_task(task: str) -> tuple[str, dict] | None:
+    t = (task or "").strip()
+    if not t:
+        return None
+    head = t.split(None, 1)
+    tool = head[0]
+    if not _looks_like_explicit_tool_name(tool):
+        return None
+    if len(head) == 1:
+        return tool, {}
+    rest_raw = head[1].strip()
+    if rest_raw.startswith("{") and rest_raw.endswith("}"):
+        try:
+            parsed = json.loads(rest_raw)
+            if isinstance(parsed, dict):
+                return tool, parsed
+        except Exception:
+            pass
+    try:
+        parts = shlex.split(t)
+    except Exception:
+        return None
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return tool, {}
+    return tool, _parse_kv_args(parts[1:])
+
+
 def _parse_gh_task(task: str) -> tuple[str, dict] | None:
     t = (task or "").strip()
     if not t.startswith("gh."):
@@ -329,6 +366,46 @@ def tool_proposer_node(state: AgentState) -> AgentState:
 
     tool: str | None = None
     args: dict | None = None
+
+    explicit = _parse_explicit_tool_task(task)
+    if explicit:
+        tool, args = explicit
+        args = {**args, "__orchestrator": "langgraph", "__agent_role": "single"}
+        payload = {
+            "query": PROPOSE_MUTATION,
+            "variables": {"tool": tool, "args": args},
+        }
+        try:
+            resp = requests.post(GATEWAY_GRAPHQL_URL, json=payload, timeout=10)
+            resp.raise_for_status()
+            body = resp.json()
+            data = body["data"]["proposeToolCall"]
+        except Exception as e:
+            tool_decision = {
+                "tool_call_id": "n/a",
+                "decision": "BLOCK",
+                "reason": f"gateway request failed: {e}",
+                "result": None,
+                "policy_citations": [],
+                "incident_refs": [],
+                "control_refs": [],
+            }
+            return {**state, "tool_result": f"[ERROR] gateway request failed: {e}", "tool_decision": tool_decision}
+
+        tool_decision = {
+            "tool_call_id": data.get("toolCallId", "n/a"),
+            "decision": data.get("decision"),
+            "reason": data.get("reason"),
+            "result": data.get("result"),
+            "policy_citations": data.get("policyCitations") or [],
+            "incident_refs": data.get("incidentRefs") or [],
+            "control_refs": data.get("controlRefs") or [],
+        }
+
+        if data["decision"] != "ALLOW":
+            return {**state, "tool_result": f"[BLOCKED] {data['reason']}", "tool_decision": tool_decision}
+
+        return {**state, "tool_result": data.get("result"), "tool_decision": tool_decision}
 
     # GitHub MCP direct tool invocation, e.g.:
     #   gh.add_issue_comment owner=... repo=... issue_number=1 body="test"
