@@ -89,6 +89,52 @@ def _jsonrpc_error_message(data: dict) -> str | None:
     return str(err)
 
 
+def _split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _known_stdio_prefixes() -> set[str]:
+    """
+    Prefixes for stdio logical servers (without trailing dot), used to map
+    namespaced tool ids (e.g., github.list_issues) back to raw names.
+    """
+    prefixes = set(_split_csv(os.getenv("MCP_STDIO_STRIP_PREFIXES")))
+    placeholder_base = (os.getenv("MCP_STDIO_PLACEHOLDER_URL", "http://docker-mcp-gateway:7001") or "").rstrip("/")
+    try:
+        from ..db.models import MCPServer
+        from ..db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            servers = db.query(MCPServer).all()
+            for server in servers:
+                base = (getattr(server, "base_url", "") or "").rstrip("/")
+                if base != placeholder_base:
+                    continue
+                prefix = (getattr(server, "tool_prefix", "") or "").strip().rstrip(".")
+                if prefix:
+                    prefixes.add(prefix)
+        finally:
+            db.close()
+    except Exception:
+        # DB may not be available in isolated tests; env prefixes still work.
+        pass
+    return prefixes
+
+
+def _normalize_tool_name_for_stdio_call(tool_name: str) -> str:
+    if not isinstance(tool_name, str) or "." not in tool_name:
+        return tool_name
+    first, rest = tool_name.split(".", 1)
+    if not rest:
+        return tool_name
+    if first in _known_stdio_prefixes():
+        return rest
+    return tool_name
+
+
 class McpStdioBackend:
     name = "mcp_stdio"
 
@@ -176,11 +222,12 @@ class McpStdioBackend:
             _terminate_process(proc)
 
     def call_tool(self, tool_name: str, args: dict) -> dict | str | None:
+        raw_tool_name = _normalize_tool_name_for_stdio_call(tool_name)
         payload = {
             "jsonrpc": "2.0",
             "id": "tools-call",
             "method": "tools/call",
-            "params": {"name": tool_name, "arguments": args},
+            "params": {"name": raw_tool_name, "arguments": args},
         }
         data = self._request(payload)
         err = _jsonrpc_error_message(data)

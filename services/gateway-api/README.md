@@ -43,6 +43,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - `MCP_STDIO_PLACEHOLDER_URL` (display-only placeholder for stdio mode)
 - `MCP_STDIO_SERVER_TOOL_MARKERS` (optional JSON map for per-server filtering)
 - `MCP_STDIO_SERVER_PREFIX_OVERRIDES` (optional JSON map for MCP server prefixes)
+- `MCP_STDIO_STRIP_PREFIXES` (optional CSV fallback for namespace stripping on call)
 
 ## MCP Notes
 
@@ -52,8 +53,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - In stdio mode, `tools/list` is aggregated; use `MCP_STDIO_SERVER_TOOL_MARKERS`
   to store tools per logical server when running `syncMcpTools`.
 - If no marker is configured for a given server, Senteniel falls back to
-  dynamic matching from server name tokens (e.g. `openbnb-airbnb` -> `airbnb_*`)
-  and optional `tool_prefix`.
+  dynamic matching from server name tokens and tool metadata.
+- Synced stdio tools are namespaced with the logical server prefix
+  (for example: `openbnb.airbnb_search`, `gh.list_issues`).
+- During execution, Senteniel strips the known namespace and sends the raw tool
+  name to Docker MCP Gateway.
 
 Example:
 
@@ -73,6 +77,16 @@ Then sync each server name:
 ```graphql
 mutation { syncMcpTools(serverName: "openbnb-airbnb") { serverName toolCount } }
 mutation { syncMcpTools(serverName: "github-official") { serverName toolCount } }
+```
+
+Policy can now target server namespaces directly:
+
+```bash
+export POLICY_PREFIX_RULES='{
+  "openbnb.":{"decision":"APPROVAL_REQUIRED","risk":0.6,"reason":"Airbnb tools require approval"},
+  "gh.list_":{"decision":"ALLOW","risk":0.0,"reason":"GitHub read/list allowed"},
+  "gh.issue_write":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"}
+}'
 ```
 
 ## Verify
