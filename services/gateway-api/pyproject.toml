@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "senteniel"
+version = "0.1.0"
+description = "Senteniel control plane runtime (FastAPI + GraphQL)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "strawberry-graphql",
+    "uvicorn",
+    "pydantic",
+    "email-validator",
+    "sqlalchemy",
+    "psycopg2-binary",
+    "prometheus-client",
+    "requests",
+    "langgraph",
+    "langchain-core",
+    "crewai",
+    "langchain-ollama",
+    "litellm",
+    "apscheduler",
+    "fastapi-sso",
+    "alembic>=1.12",
+    "neo4j",
+    "autogen-agentchat",
+    "autogen-ext[openai]",
+]
+
+[project.scripts]
+senteniel = "app.cli:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]

@@ -113,7 +113,7 @@ def _run_orchestrator(task: str, orchestrator_name: str | None) -> dict:
     except ValueError:
         raise HTTPException(
             status_code=400,
-            detail="Unknown orchestrator. Use langgraph, fsm, or crewai.",
+            detail="Unknown orchestrator. Use langgraph, autogen, or crewai.",
         )
     return orchestrator.run(task, sentinel_client_or_core=None, tool_backend=None)
 
@@ -124,20 +124,9 @@ def run_agent(task: str, orchestrator: str | None = None):
     result = _run_orchestrator(task, orchestrator_name)
     return _tool_decision_or_default(result)
 
-@app.api_route("/agent/fsm/run", methods=["GET", "POST"])
-def run_fsm(task: str):
-    ctx = _run_orchestrator(task, "fsm_hybrid")
-    if isinstance(ctx, dict) and ctx.get("tool_decision"):
-        return ctx["tool_decision"]
-    return {
-        "tool_call_id": "n/a",
-        "decision": "ALLOW",
-        "reason": "No tool required",
-        "result": None,
-        "policy_citations": [],
-        "incident_refs": [],
-        "control_refs": [],
-    }
+@app.api_route("/agent/autogen/run", methods=["GET", "POST"])
+def run_autogen(task: str):
+    return _run_orchestrator(task, "autogen")
 
 @app.api_route("/agent/crew/run", methods=["GET", "POST"])
 def run_crew(task: str):

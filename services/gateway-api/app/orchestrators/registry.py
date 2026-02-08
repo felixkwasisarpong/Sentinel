@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from .base import Orchestrator
+from .autogen import AutoGenOrchestrator
 from .crewai import CrewAIOrchestrator
-from .fsm_hybrid import FSMHybridOrchestrator
 from .langgraph import LangGraphOrchestrator
 
 
 ORCHESTRATORS: dict[str, Orchestrator] = {
     "langgraph": LangGraphOrchestrator(),
     "crewai": CrewAIOrchestrator(),
-    "fsm_hybrid": FSMHybridOrchestrator(),
+    "autogen": AutoGenOrchestrator(),
 }
 
 
@@ -19,10 +19,10 @@ def _normalize_orchestrator(name: str | None) -> str:
         return "langgraph"
     if n in ("langgraph", "lg"):
         return "langgraph"
-    if n in ("fsm", "hybrid", "fsm_hybrid"):
-        return "fsm_hybrid"
     if n in ("crewai", "crew"):
         return "crewai"
+    if n in ("autogen", "agentchat", "ag"):
+        return "autogen"
     return n
 
 

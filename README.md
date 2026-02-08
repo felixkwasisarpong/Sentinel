@@ -31,11 +31,12 @@ Senteniel answers: *Should this tool call be allowed — and can we prove why?*
 - Centralized policy, approvals, and audit
 
 **Pluggable orchestration**
-- LangGraph, CrewAI, Hybrid FSM
+- LangGraph, CrewAI, AutoGen
 - Same tools + same policy + same boundary for fair evaluation
 
 **Pluggable tool execution**
 - `mcp_http` (default)
+- `mcp_stdio` (Docker MCP Gateway over stdio)
 - `mock` (eval/testing)
 
 **Hard boundaries**
@@ -66,6 +67,21 @@ approved = client.approve_tool_call(decision.tool_call_id, note="ok", approved_b
 
 ---
 
+## Runtime Package (Control Plane)
+
+Install and run Senteniel control plane locally:
+
+```bash
+cd services/gateway-api
+python -m pip install -e . --no-use-pep517
+senteniel serve --host 0.0.0.0 --port 8000
+```
+
+This package includes the API, policy plane, orchestrators, and MCP backends.
+The `sentinel-sdk` package is only the remote client.
+
+---
+
 ## Quickstart (Docker)
 
 ```bash
@@ -76,7 +92,7 @@ Try orchestrators:
 ```bash
 curl -X POST "http://localhost:8000/agent/run?task=list%20files"
 curl -X POST "http://localhost:8000/agent/run?orchestrator=crewai&task=list%20files"
-curl -X POST "http://localhost:8000/agent/run?orchestrator=fsm&task=list%20files"
+curl -X POST "http://localhost:8000/agent/run?orchestrator=autogen&task=list%20files"
 ```
 
 ---
@@ -104,7 +120,7 @@ mutation {
 Sync tools:
 ```graphql
 mutation {
-  syncMcpTools(serverName: "github") {
+  syncMcpTools(serverName: "sandbox") {
     serverName
     toolCount
   }
@@ -113,11 +129,45 @@ mutation {
 
 ---
 
+## Docker MCP Gateway (stdio)
+
+If you want to use Docker MCP Toolkit's gateway (stdio), set:
+
+```
+TOOL_BACKEND=mcp_stdio
+MCP_STDIO_CMD="docker mcp gateway run"
+```
+
+Then enable MCP servers in Docker Desktop (MCP Toolkit). Senteniel will invoke
+`docker mcp gateway run` and send MCP JSON-RPC over stdin/stdout.
+
+Note: the `docker mcp` command must be available where `gateway-api` runs
+(host process or container with Docker CLI + MCP plugin).
+
+To sync tools into Senteniel while using stdio, call:
+```graphql
+mutation {
+  syncMcpTools(serverName: "gateway") {
+    serverName
+    toolCount
+  }
+}
+```
+If the server does not exist yet, Senteniel will create a placeholder record
+named "gateway" using `MCP_DEFAULT_PREFIX` (default `mcp.`) and
+`MCP_STDIO_PLACEHOLDER_URL` for display.
+
+---
+
 ## Environment Variables
 
 - `ORCHESTRATOR=langgraph`
 - `TOOL_BACKEND=mcp_http`
 - `MCP_BASE_URL=http://mcp-sandbox:7001` (Docker service hostname only)
+- `MCP_STDIO_CMD="docker mcp gateway run"` (when `TOOL_BACKEND=mcp_stdio`)
+- `MCP_STDIO_PLACEHOLDER_URL=http://docker-mcp-gateway:7001` (optional display-only)
+- `MCP_STDIO_AUTO_SYNC=true` (default; sync tools on first tool call)
+- `MCP_STDIO_SERVER_NAME=gateway` (placeholder MCP server name)
 - `GATEWAY_GRAPHQL_URL=http://gateway-api:8000/graphql`
 - `POLICY_PREFIX_RULES` (JSON map: prefix → decision/risk/reason)
 - Optional GitHub defaults:
