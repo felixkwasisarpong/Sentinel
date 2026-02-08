@@ -67,6 +67,21 @@ approved = client.approve_tool_call(decision.tool_call_id, note="ok", approved_b
 
 ---
 
+## Runtime Package (Control Plane)
+
+Install and run Senteniel control plane locally:
+
+```bash
+cd services/gateway-api
+python -m pip install -e . --no-use-pep517
+senteniel serve --host 0.0.0.0 --port 8000
+```
+
+This package includes the API, policy plane, orchestrators, and MCP backends.
+The `sentinel-sdk` package is only the remote client.
+
+---
+
 ## Quickstart (Docker)
 
 ```bash
