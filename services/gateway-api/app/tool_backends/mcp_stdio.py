@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 
 import requests
 
@@ -69,6 +70,34 @@ def _extract_error_detail(resp: requests.Response) -> str:
     return str(payload)
 
 
+def _default_stdio_server_name() -> str:
+    return (os.getenv("MCP_STDIO_SERVER_NAME") or "gateway").strip()
+
+
+def _resolve_server_name_from_tool_prefix(tool_name: str) -> str | None:
+    if not isinstance(tool_name, str) or "." not in tool_name:
+        return None
+    prefix = tool_name.split(".", 1)[0].strip()
+    if not prefix:
+        return None
+    try:
+        from ..db.models import MCPServer
+        from ..db.session import SessionLocal
+
+        db = SessionLocal()
+        try:
+            server = (
+                db.query(MCPServer)
+                .filter(MCPServer.tool_prefix == f"{prefix}.")
+                .first()
+            )
+            return server.name if server else None
+        finally:
+            db.close()
+    except Exception:
+        return None
+
+
 class McpStdioBackend:
     name = "mcp_stdio"
 
@@ -89,13 +118,24 @@ class McpStdioBackend:
             request_timeout or os.getenv("MCP_TOOL_RUNNER_TIMEOUT", _DEFAULT_TOOL_RUNNER_TIMEOUT)
         )
 
+    def _command_for_server(self, server_name: str | None) -> str:
+        if not server_name or server_name == _default_stdio_server_name():
+            return self.command
+        argv = shlex.split(self.command)
+        if "--servers" in argv or "--enable-all-servers" in argv:
+            return self.command
+        argv.extend(["--servers", server_name])
+        return shlex.join(argv)
+
     def call_tool(self, tool_name: str, args: dict) -> dict | str | None:
         raw_tool_name = _normalize_tool_name_for_stdio_call(tool_name)
+        server_name = _resolve_server_name_from_tool_prefix(tool_name)
+        command = self._command_for_server(server_name)
         endpoint = f"{self.tool_runner_url}/v1/mcp/call-tool"
         payload = {
             "tool_name": raw_tool_name,
             "args": args or {},
-            "command": self.command,
+            "command": command,
             "timeout": self.timeout,
         }
         try:
@@ -113,10 +153,11 @@ class McpStdioBackend:
             return data["result"]
         return data
 
-    def list_tools(self) -> list[dict]:
+    def list_tools(self, server_name: str | None = None) -> list[dict]:
+        command = self._command_for_server(server_name)
         endpoint = f"{self.tool_runner_url}/v1/mcp/list-tools"
         payload = {
-            "command": self.command,
+            "command": command,
             "timeout": self.timeout,
             "max_pages": int(os.getenv("MCP_STDIO_LIST_MAX_PAGES", "100")),
         }

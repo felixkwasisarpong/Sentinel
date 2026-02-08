@@ -54,6 +54,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - `gateway-api` does not need Docker CLI or Docker socket access.
 - `tool-runner` installs a native Linux `docker-mcp` CLI plugin at image build
   time and sets `DOCKER_MCP_IN_CONTAINER=1`.
+- During stdio sync/call, Senteniel appends `--servers <server_name>` for
+  non-gateway logical servers so per-server discovery returns only that server's tools.
 - In stdio mode, tool discovery can auto-sync on first tool call.
 - In stdio mode, `tools/list` is aggregated; use `MCP_STDIO_SERVER_TOOL_MARKERS`
   to store tools per logical server when running `syncMcpTools`.

@@ -571,10 +571,12 @@ class Mutation:
                 raise ValueError(f"MCP server not found: {server_name}")
 
             if hasattr(tool_backend, "list_tools"):
-                tools = tool_backend.list_tools()
                 if getattr(tool_backend, "name", "") == "mcp_stdio":
+                    tools = tool_backend.list_tools(server_name=server_name)
                     tools = _filter_stdio_tools_for_server(server_name, tools, server=server)
                     tools = _namespace_stdio_tools_for_server(server, tools)
+                else:
+                    tools = tool_backend.list_tools()
             else:
                 tools = list_tools(server.base_url, server.auth_header, server.auth_token)
             count = replace_mcp_tools(db, server.id, tools)
@@ -758,7 +760,11 @@ def _ensure_stdio_tools_synced(db: SessionLocal) -> None:
         return
 
     if hasattr(tool_backend, "list_tools"):
-        tools = _filter_stdio_tools_for_server(server_name, tool_backend.list_tools(), server=server)
+        if getattr(tool_backend, "name", "") == "mcp_stdio":
+            discovered = tool_backend.list_tools(server_name=server_name)
+        else:
+            discovered = tool_backend.list_tools()
+        tools = _filter_stdio_tools_for_server(server_name, discovered, server=server)
         tools = _namespace_stdio_tools_for_server(server, tools)
         replace_mcp_tools(db, server.id, tools)
         db.commit()
