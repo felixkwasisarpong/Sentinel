@@ -96,6 +96,14 @@ export POLICY_PREFIX_RULES='{
 }'
 ```
 
+All orchestrators (`langgraph`, `crewai`, `autogen`) support explicit
+namespaced tool invocation using either:
+
+- `<tool_name> {"json":"args"}`
+- `<tool_name> key=value key2=value2`
+
+Example: `openbnb_airbnb.airbnb_search {"location":"Accra"}`
+
 ## Tool Runner Architecture
 
 With `TOOL_BACKEND=mcp_stdio`, requests flow like this:
