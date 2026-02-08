@@ -4,6 +4,7 @@ import time
 import json
 import requests
 import uuid
+import re
 from typing import Any
 from datetime import datetime, timezone
 
@@ -556,7 +557,7 @@ class Mutation:
             if not server and getattr(tool_backend, "name", "") == "mcp_stdio":
                 placeholder_base = os.getenv("MCP_STDIO_PLACEHOLDER_URL", "http://docker-mcp-gateway:7001")
                 placeholder_base = validate_mcp_base_url(placeholder_base)
-                placeholder_prefix = os.getenv("MCP_DEFAULT_PREFIX", "mcp.")
+                placeholder_prefix = _stdio_server_prefix(server_name)
                 server = MCPServer(
                     name=server_name,
                     base_url=placeholder_base,
@@ -571,6 +572,8 @@ class Mutation:
 
             if hasattr(tool_backend, "list_tools"):
                 tools = tool_backend.list_tools()
+                if getattr(tool_backend, "name", "") == "mcp_stdio":
+                    tools = _filter_stdio_tools_for_server(server_name, tools, server=server)
             else:
                 tools = list_tools(server.base_url, server.auth_header, server.auth_token)
             count = replace_mcp_tools(db, server.id, tools)
@@ -599,6 +602,113 @@ def _env_truthy(value: str | None, default: bool = True) -> bool:
     return value.strip().lower() not in ("0", "false", "no", "off")
 
 
+def _stdio_server_tool_markers() -> dict[str, list[str]]:
+    """
+    Parse MCP_STDIO_SERVER_TOOL_MARKERS JSON:
+    {
+      "openbnb-airbnb": ["airbnb_", "airbnb_search"],
+      "github-official": ["gh_", "issue_"]
+    }
+    Values may be a string or list of strings.
+    """
+    raw = (os.getenv("MCP_STDIO_SERVER_TOOL_MARKERS") or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    markers_by_server: dict[str, list[str]] = {}
+    for server_name, value in data.items():
+        if not isinstance(server_name, str):
+            continue
+        markers: list[str] = []
+        if isinstance(value, str):
+            value = [value]
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item.strip():
+                    markers.append(item.strip())
+        if markers:
+            markers_by_server[server_name] = markers
+    return markers_by_server
+
+
+def _name_markers_from_server_name(server_name: str) -> list[str]:
+    slug = re.sub(r"[^a-z0-9]+", "_", (server_name or "").strip().lower()).strip("_")
+    if not slug:
+        return []
+    parts = [p for p in re.split(r"[_\-\.]+", slug) if p]
+    candidates: list[str] = []
+    candidates.append(slug)
+    # favor more specific tokens first (e.g., "airbnb" in "openbnb-airbnb")
+    candidates.extend(sorted(parts, key=len, reverse=True))
+    # keep useful tokens only
+    return [c for c in candidates if len(c) >= 3]
+
+
+def _filter_stdio_tools_for_server(server_name: str, tools: list[dict], server: MCPServer | None = None) -> list[dict]:
+    markers_map = _stdio_server_tool_markers()
+    markers = markers_map.get(server_name) or markers_map.get("*") or []
+    explicit = bool(markers)
+
+    # If user registered a non-default prefix for this logical server, use it as a marker too.
+    if server and isinstance(server.tool_prefix, str) and server.tool_prefix.strip():
+        prefix = server.tool_prefix.strip()
+        if prefix == "mcp." and not explicit:
+            # default placeholder prefix is too broad; ignore it for filtering.
+            pass
+        else:
+            markers.append(prefix)
+            markers.append(prefix.rstrip("."))
+
+    # Dynamic fallback for user-added MCP servers in stdio mode.
+    if not markers:
+        if server_name in ("gateway", os.getenv("MCP_STDIO_SERVER_NAME", "gateway")):
+            return tools
+        for token in _name_markers_from_server_name(server_name):
+            markers.extend([f"{token}_", f"{token}.", token])
+
+    if not markers:
+        return tools
+
+    filtered: list[dict] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name") or "")
+        if not name:
+            continue
+        # Marker can be exact tool name or a prefix.
+        if any(name == m or name.startswith(m) for m in markers):
+            filtered.append(tool)
+    return filtered
+
+
+def _stdio_server_prefix(server_name: str) -> str:
+    raw_overrides = (os.getenv("MCP_STDIO_SERVER_PREFIX_OVERRIDES") or "").strip()
+    if raw_overrides:
+        try:
+            parsed = json.loads(raw_overrides)
+            if isinstance(parsed, dict):
+                value = parsed.get(server_name)
+                if isinstance(value, str) and value.strip():
+                    prefix = value.strip()
+                    if not prefix.endswith("."):
+                        prefix = f"{prefix}."
+                    return prefix
+        except Exception:
+            pass
+
+    slug = re.sub(r"[^a-z0-9_]+", "_", (server_name or "gateway").strip().lower()).strip("_")
+    if not slug:
+        slug = "gateway"
+    return f"{slug}."
+
+
 def _ensure_stdio_tools_synced(db: SessionLocal) -> None:
     if not _env_truthy(os.getenv("MCP_STDIO_AUTO_SYNC"), default=True):
         return
@@ -611,7 +721,7 @@ def _ensure_stdio_tools_synced(db: SessionLocal) -> None:
     if not server:
         placeholder_base = os.getenv("MCP_STDIO_PLACEHOLDER_URL", "http://docker-mcp-gateway:7001")
         placeholder_base = validate_mcp_base_url(placeholder_base)
-        placeholder_prefix = os.getenv("MCP_DEFAULT_PREFIX", "mcp.")
+        placeholder_prefix = _stdio_server_prefix(server_name)
         server = MCPServer(
             name=server_name,
             base_url=placeholder_base,
@@ -626,7 +736,7 @@ def _ensure_stdio_tools_synced(db: SessionLocal) -> None:
         return
 
     if hasattr(tool_backend, "list_tools"):
-        tools = tool_backend.list_tools()
+        tools = _filter_stdio_tools_for_server(server_name, tool_backend.list_tools(), server=server)
         replace_mcp_tools(db, server.id, tools)
         db.commit()
 
