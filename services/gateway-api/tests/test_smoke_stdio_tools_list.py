@@ -1,6 +1,4 @@
 import os
-import shlex
-import shutil
 import sys
 from pathlib import Path
 
@@ -30,16 +28,6 @@ def test_stdio_tools_list_discovers_tools_from_gateway():
     if not _is_truthy(os.getenv("RUN_STDIO_TOOLS_LIST_SMOKE"), default=False):
         pytest.skip("Set RUN_STDIO_TOOLS_LIST_SMOKE=1 to enable stdio tools/list smoke test.")
 
-    cmd = os.getenv("MCP_STDIO_CMD", "docker mcp gateway run")
-    cmd_argv = shlex.split(cmd)
-    if not cmd_argv:
-        pytest.skip("MCP_STDIO_CMD is empty.")
-    if shutil.which(cmd_argv[0]) is None:
-        pytest.skip(
-            f"'{cmd_argv[0]}' not found in PATH. "
-            "Run this smoke test where Docker CLI is available."
-        )
-
     min_tools = int(os.getenv("SMOKE_MIN_TOOLS", "1"))
     max_print = int(os.getenv("SMOKE_PRINT_MAX", "200"))
     include_prefixes = _split_csv(os.getenv("SMOKE_INCLUDE_TOOL_PREFIXES"))
@@ -47,7 +35,7 @@ def test_stdio_tools_list_discovers_tools_from_gateway():
     expected_markers_raw = os.getenv("SMOKE_EXPECT_TOOL_MARKERS", "")
     expected_markers = [m.strip() for m in expected_markers_raw.split(",") if m.strip()]
 
-    backend = McpStdioBackend(command=cmd)
+    backend = McpStdioBackend(command=os.getenv("MCP_STDIO_CMD", "docker mcp gateway run"))
     tools = backend.list_tools()
     assert len(tools) >= min_tools, (
         f"Expected at least {min_tools} tools from stdio gateway, got {len(tools)}"
