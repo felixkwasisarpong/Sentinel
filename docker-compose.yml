@@ -36,6 +36,16 @@ services:
     volumes:
       - ./sandbox:/sandbox
 
+  tool-runner:
+    build: ./services/tool-runner
+    environment:
+      MCP_STDIO_CMD: "docker mcp gateway run"
+      MCP_STDIO_TIMEOUT: "10"
+      DOCKER_MCP_IN_CONTAINER: "1"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports: ["8100:8100"]
+
   gateway-api:
     build: ./services/gateway-api
     environment:
@@ -50,17 +60,19 @@ services:
       NEO4J_PASSWORD: testpassword
       GITHUB_OWNER: felixkwasisarpong
       GITHUB_REPO: Sentinel
+      TOOL_BACKEND: mcp_stdio
+      MCP_TOOL_RUNNER_URL: http://tool-runner:8100
 
       POLICY_PREFIX_RULES: >-
         {"gh.search_":{"decision":"ALLOW","risk":0.0,"reason":"GitHub search allowed"},
         "gh.list_":{"decision":"ALLOW","risk":0.0,"reason":"GitHub list allowed"},
         "gh.add_":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"},
         "gh.create_":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"},
-        "gh.delete_":{"decision":"BLOCK","risk":1.0,"reason":"GitHub delete blocked"}}
-
+        "gh.delete_":{"decision":"BLOCK","risk":1.0,"reason":"GitHub delete blocked"},
+         "openbnb_airbnb.":{"decision":"ALLOW","risk":0.0,"reason":"Airbnb tools are  allowed"}}
 
     ports: ["8000:8000"]
-    depends_on: [postgres, mcp-sandbox, ollama, neo4j]
+    depends_on: [postgres, mcp-sandbox, ollama, neo4j, tool-runner]
 
   prometheus:
     image: prom/prometheus

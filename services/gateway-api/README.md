@@ -37,7 +37,8 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - `OPENAI_MODEL_NAME`
 - `OPENAI_API_KEY`
 - `MCP_BASE_URL` / `MCP_URL` (for `mcp_http`)
-- `MCP_STDIO_CMD` (for `mcp_stdio`, default `docker mcp gateway run`)
+- `MCP_TOOL_RUNNER_URL` (for `mcp_stdio`, default `http://tool-runner:8100`)
+- `MCP_STDIO_CMD` (forwarded to tool-runner, default `docker mcp gateway run`)
 - `MCP_STDIO_AUTO_SYNC` (default `true`)
 - `MCP_STDIO_SERVER_NAME` (default `gateway`)
 - `MCP_STDIO_PLACEHOLDER_URL` (display-only placeholder for stdio mode)
@@ -48,7 +49,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ## MCP Notes
 
 - `mcp_http` expects Docker-hosted MCP endpoints using Docker service hostnames.
-- `mcp_stdio` executes `docker mcp gateway run` and talks MCP over stdio.
+- `mcp_stdio` calls a separate Tool Runner service over HTTP.
+- Tool Runner executes `docker mcp gateway run` and talks MCP over stdio.
+- `gateway-api` does not need Docker CLI or Docker socket access.
+- `tool-runner` installs a native Linux `docker-mcp` CLI plugin at image build
+  time and sets `DOCKER_MCP_IN_CONTAINER=1`.
 - In stdio mode, tool discovery can auto-sync on first tool call.
 - In stdio mode, `tools/list` is aggregated; use `MCP_STDIO_SERVER_TOOL_MARKERS`
   to store tools per logical server when running `syncMcpTools`.
@@ -88,6 +93,18 @@ export POLICY_PREFIX_RULES='{
   "gh.issue_write":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"}
 }'
 ```
+
+## Tool Runner Architecture
+
+With `TOOL_BACKEND=mcp_stdio`, requests flow like this:
+
+1. `gateway-api` evaluates policy and orchestrates.
+2. `gateway-api` calls `MCP_TOOL_RUNNER_URL` for `tools/list` and `tools/call`.
+3. `tool-runner` executes `docker mcp gateway run` over stdio.
+4. Docker MCP Gateway fans out to the MCP servers you enabled in Docker MCP Toolkit.
+
+In Docker Compose, `tool-runner` is the only service that needs Docker socket
+access (`/var/run/docker.sock`).
 
 ## Verify
 
