@@ -40,3 +40,8 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.pytest.ini_options]
+markers = [
+    "smoke: marks smoke tests that require external runtime/dependencies",
+]

@@ -41,12 +41,39 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - `MCP_STDIO_AUTO_SYNC` (default `true`)
 - `MCP_STDIO_SERVER_NAME` (default `gateway`)
 - `MCP_STDIO_PLACEHOLDER_URL` (display-only placeholder for stdio mode)
+- `MCP_STDIO_SERVER_TOOL_MARKERS` (optional JSON map for per-server filtering)
+- `MCP_STDIO_SERVER_PREFIX_OVERRIDES` (optional JSON map for MCP server prefixes)
 
 ## MCP Notes
 
 - `mcp_http` expects Docker-hosted MCP endpoints using Docker service hostnames.
 - `mcp_stdio` executes `docker mcp gateway run` and talks MCP over stdio.
 - In stdio mode, tool discovery can auto-sync on first tool call.
+- In stdio mode, `tools/list` is aggregated; use `MCP_STDIO_SERVER_TOOL_MARKERS`
+  to store tools per logical server when running `syncMcpTools`.
+- If no marker is configured for a given server, Senteniel falls back to
+  dynamic matching from server name tokens (e.g. `openbnb-airbnb` -> `airbnb_*`)
+  and optional `tool_prefix`.
+
+Example:
+
+```bash
+export MCP_STDIO_SERVER_TOOL_MARKERS='{
+  "openbnb-airbnb":["airbnb_"],
+  "github-official":["add_","issue_","list_","search_"]
+}'
+export MCP_STDIO_SERVER_PREFIX_OVERRIDES='{
+  "openbnb-airbnb":"openbnb",
+  "github-official":"gh"
+}'
+```
+
+Then sync each server name:
+
+```graphql
+mutation { syncMcpTools(serverName: "openbnb-airbnb") { serverName toolCount } }
+mutation { syncMcpTools(serverName: "github-official") { serverName toolCount } }
+```
 
 ## Verify
 
