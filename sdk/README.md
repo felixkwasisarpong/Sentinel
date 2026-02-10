@@ -1,6 +1,6 @@
-# Sentinel SDK (Python)
+# sentinel-core (Python)
 
-Library-first Sentinel package:
+`sentinel-core` is the library-first Sentinel package:
 - no required port
 - no required HTTP server
 - pluggable MCP/tool backends
@@ -8,6 +8,9 @@ Library-first Sentinel package:
 - pluggable audit sinks
 
 The existing `SentinelClient` (GraphQL remote client) is still available.
+Both imports are supported:
+- `from sentinel_core import ...` (preferred)
+- `from sentinel_sdk import ...` (backward compatible)
 
 ## Install (editable)
 
@@ -15,10 +18,12 @@ The existing `SentinelClient` (GraphQL remote client) is still available.
 pip install -e sdk
 ```
 
+Published package name: `sentinel-core`.
+
 ## Local Library Usage (No Server)
 
 ```python
-from sentinel_sdk import (
+from sentinel_core import (
     SentinelEngine,
     StaticToolBackend,
     InMemoryAuditSink,
@@ -62,7 +67,7 @@ print(audit.events[-1])
 ## Orchestrator Plugin Example
 
 ```python
-from sentinel_sdk import SentinelEngine, ExplicitToolCallOrchestrator, StaticToolBackend
+from sentinel_core import SentinelEngine, ExplicitToolCallOrchestrator, StaticToolBackend
 
 backend = StaticToolBackend({"demo.echo": lambda args: args})
 engine = SentinelEngine(tool_backend=backend, allow_unknown_tools=True)
@@ -76,7 +81,7 @@ print(result)
 ## Remote GraphQL Client (Optional)
 
 ```python
-from sentinel_sdk import SentinelClient
+from sentinel_core import SentinelClient
 
 client = SentinelClient("http://localhost:8000/graphql")
 result = client.propose_tool_call("fs.list_dir", {"path": "/sandbox"})

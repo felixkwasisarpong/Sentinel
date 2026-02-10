@@ -50,14 +50,14 @@ Senteniel answers: *Should this tool call be allowed — and can we prove why?*
 
 ---
 
-## SDK (Python)
+## sentinel-core (Library SDK)
 
 ```bash
 pip install -e sdk
 ```
 
 ```python
-from sentinel_sdk import SentinelClient
+from sentinel_core import SentinelClient
 
 client = SentinelClient("http://localhost:8000/graphql")
 
@@ -78,7 +78,26 @@ senteniel serve --host 0.0.0.0 --port 8000
 ```
 
 This package includes the API, policy plane, orchestrators, and MCP backends.
-The `sentinel-sdk` package is only the remote client.
+Package split:
+- `sentinel-core`: library SDK
+- `senteniel`: server/runtime wrapper
+
+## Build and Publish Targets
+
+Use root `Makefile` targets:
+
+```bash
+make build-core
+make build-runtime
+make build-packages
+```
+
+Publish with Twine:
+
+```bash
+make publish-core TWINE_REPOSITORY=pypi
+make publish-runtime TWINE_REPOSITORY=pypi
+```
 
 ---
 
