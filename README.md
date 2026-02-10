@@ -50,10 +50,16 @@ Senteniel answers: *Should this tool call be allowed — and can we prove why?*
 
 ---
 
-## sentinel-core (Library SDK)
+## senteniel-core-fks (Library SDK)
 
 ```bash
 pip install -e sdk
+```
+
+Install from PyPI:
+
+```bash
+pip install senteniel-core-fks
 ```
 
 ```python
@@ -127,7 +133,7 @@ senteniel serve --host 0.0.0.0 --port 8000
 
 This package includes the API, policy plane, orchestrators, and MCP backends.
 Package split:
-- `sentinel-core`: library SDK
+- `senteniel-core-fks`: library SDK
 - `senteniel`: server/runtime wrapper
 
 ## Build and Publish Targets

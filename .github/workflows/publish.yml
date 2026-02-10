@@ -18,7 +18,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: sentinel-core
+          - name: senteniel-core-fks
             path: sdk
           - name: senteniel
             path: services/gateway-api

@@ -1,6 +1,6 @@
-# sentinel-core (Python)
+# senteniel-core-fks (Python)
 
-`sentinel-core` is the library-first Sentinel package:
+`senteniel-core-fks` is the library-first Sentinel package:
 - no required port
 - no required HTTP server
 - pluggable MCP/tool backends
@@ -18,7 +18,13 @@ Both imports are supported:
 pip install -e sdk
 ```
 
-Published package name: `sentinel-core`.
+Install from PyPI:
+
+```bash
+pip install senteniel-core-fks
+```
+
+Published package name: `senteniel-core-fks`.
 
 ## Local Library Usage (No Server)
 
