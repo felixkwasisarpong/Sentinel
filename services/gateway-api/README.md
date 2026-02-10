@@ -1,7 +1,7 @@
 # Senteniel Server Wrapper
 
 `senteniel` is the server/runtime wrapper package (FastAPI + GraphQL).
-For embedded library usage, use `sentinel-core`.
+For embedded library usage, use `senteniel-core-fks`.
 
 ## Install
 
@@ -126,5 +126,5 @@ curl -s http://localhost:8000/graphql -H 'content-type: application/json' \
 ## SDK vs Runtime
 
 - `senteniel`: full runtime/control plane (this package)
-- `sentinel-core`: library SDK for embedded policy/orchestration/tool execution
+- `senteniel-core-fks`: library SDK for embedded policy/orchestration/tool execution
   and optional remote client calls
