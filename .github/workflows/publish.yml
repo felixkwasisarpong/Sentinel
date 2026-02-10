@@ -1,0 +1,50 @@
+name: Publish Python Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: sentinel-core
+            path: sdk
+          - name: senteniel
+            path: services/gateway-api
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+
+      - name: Build ${{ matrix.name }}
+        working-directory: ${{ matrix.path }}
+        run: python -m build
+
+      - name: Upload ${{ matrix.name }} to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+          TWINE_NON_INTERACTIVE: "1"
+        run: |
+          python -m twine upload --skip-existing ${{ matrix.path }}/dist/*

@@ -147,6 +147,11 @@ make publish-core TWINE_REPOSITORY=pypi
 make publish-runtime TWINE_REPOSITORY=pypi
 ```
 
+CI publishing:
+- Create a git tag like `v0.0.1` (or publish a GitHub release)
+- GitHub Actions builds and uploads both packages
+- Requires `PYPI_API_TOKEN` secret in the repo
+
 ---
 
 ## Quickstart (Docker)
