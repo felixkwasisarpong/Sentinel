@@ -85,6 +85,45 @@ def _parse_gh_task(task: str) -> tuple[str, dict] | None:
     return tool, _parse_kv_args(parts[1:])
 
 
+def _looks_like_explicit_tool_name(name: str) -> bool:
+    if not name or "." not in name:
+        return False
+    if name.startswith(".") or name.endswith("."):
+        return False
+    # Tool names are namespaced in Sentinel (e.g., gh.list_issues, openbnb_airbnb.airbnb_search).
+    return True
+
+
+def _parse_explicit_tool_task(task: str) -> tuple[str, dict] | None:
+    t = (task or "").strip()
+    if not t:
+        return None
+    head = t.split(None, 1)
+    tool = head[0]
+    if not _looks_like_explicit_tool_name(tool):
+        return None
+    if len(head) == 1:
+        return tool, {}
+    rest_raw = head[1].strip()
+    # Preserve JSON exactly as provided in task text.
+    if rest_raw.startswith("{") and rest_raw.endswith("}"):
+        try:
+            parsed = json.loads(rest_raw)
+            if isinstance(parsed, dict):
+                return tool, parsed
+        except Exception:
+            pass
+    try:
+        parts = shlex.split(t)
+    except Exception:
+        return None
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return tool, {}
+    return tool, _parse_kv_args(parts[1:])
+
+
 def _extract_gh_owner_repo(text: str) -> tuple[str | None, str | None]:
     if not text:
         return None, None
@@ -239,6 +278,26 @@ def _select_tool(task: str) -> tuple[str, dict] | None:
 
 
 def run_crewai(task: str) -> dict:
+    explicit = _parse_explicit_tool_task(task)
+    if explicit:
+        tool, args = explicit
+        td = propose_tool_decision(tool, args, "investigator")
+        if td.get("decision") == "ALLOW":
+            tool_output = td.get("result")
+            rendered = f"Tool Output: {tool_output}\nCompleted."
+        else:
+            tool_output = f"[BLOCKED] {td.get('reason')}"
+            rendered = (
+                f"Tool Output: {tool_output}\n"
+                "I can't perform that action due to policy restrictions."
+            )
+        return {
+            "orchestrator": "crewai",
+            "task": task,
+            "result": rendered,
+            "tool_decision": td,
+        }
+
     gh = _parse_gh_task(task)
     if gh:
         tool, args = gh

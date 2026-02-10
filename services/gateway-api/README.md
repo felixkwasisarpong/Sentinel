@@ -1,7 +1,7 @@
-# Senteniel Runtime
+# Senteniel Server Wrapper
 
-`senteniel` is the control plane runtime package (FastAPI + GraphQL), not the
-thin remote client SDK.
+`senteniel` is the server/runtime wrapper package (FastAPI + GraphQL).
+For embedded library usage, use `sentinel-core`.
 
 ## Install
 
@@ -96,6 +96,14 @@ export POLICY_PREFIX_RULES='{
 }'
 ```
 
+All orchestrators (`langgraph`, `crewai`, `autogen`) support explicit
+namespaced tool invocation using either:
+
+- `<tool_name> {"json":"args"}`
+- `<tool_name> key=value key2=value2`
+
+Example: `openbnb_airbnb.airbnb_search {"location":"Accra"}`
+
 ## Tool Runner Architecture
 
 With `TOOL_BACKEND=mcp_stdio`, requests flow like this:
@@ -118,4 +126,5 @@ curl -s http://localhost:8000/graphql -H 'content-type: application/json' \
 ## SDK vs Runtime
 
 - `senteniel`: full runtime/control plane (this package)
-- `sentinel-sdk`: thin client used by external apps to call the runtime
+- `sentinel-core`: library SDK for embedded policy/orchestration/tool execution
+  and optional remote client calls

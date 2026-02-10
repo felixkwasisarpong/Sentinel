@@ -5,7 +5,12 @@ import importlib
 import os
 from typing import Any
 
-from .crewai_runner import _parse_gh_task, _parse_gh_english_task, _select_tool
+from .crewai_runner import (
+    _parse_explicit_tool_task,
+    _parse_gh_task,
+    _parse_gh_english_task,
+    _select_tool,
+)
 from .crewai_tools import propose_tool_decision
 
 _LAST_TOOL_DECISION: dict | None = None
@@ -163,6 +168,18 @@ async def _run_autogen_async(task: str) -> dict:
 
 
 def run_autogen(task: str) -> dict:
+    explicit = _parse_explicit_tool_task(task)
+    if explicit:
+        tool, args = explicit
+        td = propose_tool_decision(tool, args, "autogen")
+        tool_output = td.get("result") if td.get("decision") == "ALLOW" else f"[BLOCKED] {td.get('reason')}"
+        return {
+            "orchestrator": "autogen",
+            "task": task,
+            "result": f"Tool Output: {tool_output}\nCompleted.",
+            "tool_decision": td,
+        }
+
     gh = _parse_gh_task(task)
     if gh:
         tool, args = gh

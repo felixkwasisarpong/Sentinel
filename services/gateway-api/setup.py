@@ -4,7 +4,7 @@ from setuptools import find_packages, setup
 setup(
     name="senteniel",
     version="0.1.0",
-    description="Senteniel control plane runtime (FastAPI + GraphQL)",
+    description="Senteniel server wrapper for Sentinel control plane (FastAPI + GraphQL)",
     packages=find_packages(include=["app", "app.*"]),
     include_package_data=True,
     install_requires=[
