@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sentinel-sdk"
+name = "sentinel-core"
 version = "0.0.1"
-description = "Thin client for Sentinel GraphQL API"
+description = "Library-only Sentinel core (policy, orchestration, MCP/tool plugins, audit sinks)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["requests"]
 
 [tool.setuptools]
-packages = ["sentinel_sdk"]
+packages = ["sentinel_sdk", "sentinel_core"]
