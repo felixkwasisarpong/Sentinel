@@ -64,11 +64,11 @@ services:
       MCP_TOOL_RUNNER_URL: http://tool-runner:8100
 
       POLICY_PREFIX_RULES: >-
-        {"gh.search_":{"decision":"ALLOW","risk":0.0,"reason":"GitHub search allowed"},
-        "gh.list_":{"decision":"ALLOW","risk":0.0,"reason":"GitHub list allowed"},
-        "gh.add_":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"},
-        "gh.create_":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"},
-        "gh.delete_":{"decision":"BLOCK","risk":1.0,"reason":"GitHub delete blocked"},
+        {"github_official.search_":{"decision":"ALLOW","risk":0.0,"reason":"GitHub search allowed"},
+        "github_official.list_":{"decision":"ALLOW","risk":0.0,"reason":"GitHub list allowed"},
+        "github_official.add_":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"},
+        "github_official.create_":{"decision":"APPROVAL_REQUIRED","risk":0.7,"reason":"GitHub write requires approval"},
+        "github_official.delete_":{"decision":"BLOCK","risk":1.0,"reason":"GitHub delete blocked"},
          "openbnb_airbnb.":{"decision":"ALLOW","risk":0.0,"reason":"Airbnb tools are  allowed"}}
 
     ports: ["8000:8000"]
