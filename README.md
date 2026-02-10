@@ -65,6 +65,54 @@ decision = client.propose_tool_call("fs.list_dir", {"path": "/sandbox"})
 approved = client.approve_tool_call(decision.tool_call_id, note="ok", approved_by="alice")
 ```
 
+### SDK Quickstart (Local, No Server)
+
+Local usage requires **two explicit steps**:
+1. **Sync tools** so the engine knows what exists.
+2. **Add policy rules** or everything will be blocked by default.
+
+```python
+from sentinel_core import (
+    SentinelEngine,
+    StaticToolBackend,
+    InMemoryAuditSink,
+    make_policy_engine_from_dict,
+)
+
+backend = StaticToolBackend({
+    "demo.echo": lambda args: args,
+})
+
+policy = make_policy_engine_from_dict({
+    "demo.": {"decision": "ALLOW", "risk": 0.0, "reason": "Demo tools allowed"}
+})
+
+audit = InMemoryAuditSink()
+engine = SentinelEngine(tool_backend=backend, policy_engine=policy, audit_sinks=[audit])
+engine.sync_tools()
+
+decision = engine.propose_tool_call("demo.echo", {"msg": "hello"})
+print(decision)
+```
+
+### Audit Sinks (SDK)
+
+By default, audits go nowhere unless you attach a sink. Options:
+- `InMemoryAuditSink` (default dev flow)
+- `JsonlAuditSink("audit.jsonl")` (append-only file)
+- `HttpAuditSink("https://your-endpoint/events")` (ship to external store)
+
+```python
+from sentinel_core import JsonlAuditSink, SentinelEngine, StaticToolBackend
+
+engine = SentinelEngine(
+    tool_backend=StaticToolBackend({"demo.echo": lambda args: args}),
+    audit_sinks=[JsonlAuditSink("audit.jsonl")],
+)
+engine.sync_tools()
+engine.propose_tool_call("demo.echo", {"msg": "hello"})
+```
+
 ---
 
 ## Runtime Package (Control Plane)
